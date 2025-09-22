@@ -29,6 +29,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
     chat = update.effective_chat
+    topic_id = update.message.message_thread_id
 
     from bot.database.session import async_session  # import sessionmaker
 
@@ -39,7 +40,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             first_name=user.first_name,
             last_name=user.last_name,
             group_id=str(chat.id) if chat.type in ['group', 'supergroup'] else None,
-            group_name=chat.title if chat.type in ['group', 'supergroup'] else None
+            group_name=chat.title if chat.type in ['group', 'supergroup'] else None,
+            topic_id=topic_id,
         )
 
     await update.message.reply_text(

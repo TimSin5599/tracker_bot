@@ -38,7 +38,7 @@ async def get_or_create_user(user_id: int, username: str, first_name: str, last_
         return user
 
 
-async def get_or_create_group(group_id: str, group_name: str = None):
+async def get_or_create_group(group_id: str, group_name: str = None, topic_id: str = None):
     """Получает или создает группу без передачи session"""
     async with async_session() as session:
         result = await session.execute(
@@ -49,6 +49,7 @@ async def get_or_create_group(group_id: str, group_name: str = None):
         if not group:
             group = Group(
                 group_id=group_id,
+                topic_id=topic_id,
                 group_name=group_name,
                 created_at=datetime.now()
             )
@@ -59,11 +60,11 @@ async def get_or_create_group(group_id: str, group_name: str = None):
         return group
 
 
-async def add_user_to_group(user_id: int, group_id: str, group_name: str = None):
+async def add_user_to_group(user_id: int, group_id: str, group_name: str = None, topic_id: str = None):
     """Добавляет пользователя в группу, безопасно проверяя наличие"""
     async with async_session() as session:
         user = await get_or_create_user(user_id, "", "")
-        group = await get_or_create_group(group_id, group_name)
+        group = await get_or_create_group(group_id, group_name, topic_id)
         user = await session.get(User, user.id, options=[selectinload(User.groups)])
         group = await session.get(Group, group.id)
         if group not in user.groups:
@@ -71,13 +72,13 @@ async def add_user_to_group(user_id: int, group_id: str, group_name: str = None)
             await session.commit()
 
 
-async def add_pushups(user_id: int, group_id: str, count: int = 1, group_name: str = None):
+async def add_pushups(user_id: int, group_id: str, count: int = 1, group_name: str = None, topic_id: str = None):
     """Добавление отжиманий пользователю в конкретной группе"""
     today = date.today()
     async with async_session() as session:
         user = await get_or_create_user(user_id, "", "")
-        group = await get_or_create_group(group_id, group_name)
-        await add_user_to_group(user_id, group_id, group_name)
+        group = await get_or_create_group(group_id, group_name, topic_id)
+        await add_user_to_group(user_id, group_id, group_name, topic_id)
 
         # Получаем вес кружка
         weight = user.circle_weight or 1
@@ -363,11 +364,12 @@ async def update_user_activity(
     last_name: str = None,
     group_id: str = None,
     group_name: str = None,
+    topic_id: str = None,
 ):
     async with async_session() as session:
         user = await get_or_create_user(user_id, username, first_name, last_name)
         if group_id:
-            group = await get_or_create_group(group_id, group_name)
+            group = await get_or_create_group(group_id, group_name, topic_id)
             await add_user_to_group(user_id, group_id, group_name)
         user.last_activity = datetime.now()
         user.message_count += 1

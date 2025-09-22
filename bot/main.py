@@ -4,7 +4,6 @@ from telegram.ext import Application
 from config.settings import settings
 from bot.handlers.commands import setup_command_handlers
 from bot.handlers.consent import setup_consent_handlers
-from bot.handlers.tracking import setup_tracking_handlers
 from bot.handlers.pushups import setup_pushups_handlers
 from bot.database.storage import init_database
 from bot.utils.reminders import setup_reminders
@@ -35,8 +34,8 @@ async def main():
     setup_pushups_handlers(application)  # ПЕРВЫМ - высокий приоритет
     setup_command_handlers(application)
     setup_consent_handlers(application)
-    setup_tracking_handlers(application)
-
+    # setup_tracking_handlers(application)
+    #
     # Настраиваем напоминания
     setup_reminders(application)
 

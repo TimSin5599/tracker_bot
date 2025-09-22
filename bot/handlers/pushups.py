@@ -1,6 +1,12 @@
 import re
+from pydoc_data.topics import topics
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, MessageHandler, filters, CommandHandler, CallbackQueryHandler
+from sqlalchemy import select
+from bot.database.models import Group
+
+from bot.database.session import async_session
 from bot.database.storage import add_pushups
 
 
@@ -9,6 +15,22 @@ async def handle_pushup_video_note(update: Update, context: ContextTypes.DEFAULT
     if not update.message or not update.message.from_user:
         print("❌ Нет данных: update.message или from_user отсутствует")
         return
+
+    group_id = update.effective_chat.id if update.effective_chat else None
+    topic_id = update.message.message_thread_id if update.message else None
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Group).where((Group.group_id == group_id) &
+                                (Group.topic_id == topic_id))
+        )
+        group = result.scalar_one_or_none()
+        if group:
+            print(f"🔍 Найдена группа {group.group_id}, проверяю topic_id={topic_id} vs {group.topic_id}")
+        else:
+            print(f"❌ Группа {group_id} не найдена в БД")
+            return
+
 
     user = update.message.from_user
     user_id = user.id
@@ -51,7 +73,7 @@ async def handle_pushup_count_callback(update: Update, context: ContextTypes.DEF
     callback_data = query.data
     print(f"🔔 Получен callback: {callback_data}")
 
-    group_id = update.effective_chat.id if update.effective_chat else None
+    group_id = update.effective_chat if update.effective_chat else None
 
     count_str = callback_data.split('_')[1]
 
@@ -91,7 +113,7 @@ async def handle_pushup_count_callback(update: Update, context: ContextTypes.DEF
         # Для числовых кнопок обрабатываем как обычно
         count = int(count_str)
         print(f"🔔 Обрабатываем {count} отжиманий")
-        await process_pushup_count(update, user_id, count, group_id)
+        await process_pushup_count(update, user_id, count, group_id.id)
 
 
 async def handle_pushup_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -312,10 +334,11 @@ async def correct_pushups_command(update: Update, context: ContextTypes.DEFAULT_
     try:
         correct_count = int(context.args[0])
         user_id = update.message.from_user.id
-        group_id = update.effective_chat.id if update.effective_chat else None
+        group_id = str(update.effective_chat.id) if update.effective_chat else None
+        topic_id = update.message.message_thread_id if update.message else None
 
         # Обновляем счетчик
-        today_total, actual_count, used_weight = await add_pushups(user_id, group_id, correct_count)
+        today_total, actual_count, used_weight = await add_pushups(user_id=user_id, group_id=group_id, count=correct_count, topic_id=topic_id)
 
         await update.message.reply_text(
             f"✅ Исправлено! Засчитано: {actual_count} отжиманий\n"

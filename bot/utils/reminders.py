@@ -1,3 +1,5 @@
+from sklearn.metrics import mean_squared_log_error
+
 from bot.database.session import async_session
 from datetime import time
 from telegram.ext import ContextTypes
@@ -30,7 +32,7 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
                 report_text = "✅ Все молодцы! Сегодня все сделали отжимания 🎉"
 
             try:
-                await context.bot.send_message(chat_id=group.group_id, text=report_text)
+                await context.bot.send_message(chat_id=group.group_id, text=report_text, message_thread_id=group.topic_id)
             except Exception as e:
                 print(f"Не удалось отправить сообщение в группу {group.group_id}: {e}")
 
@@ -61,7 +63,7 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
                 #         print(f"Не удалось отправить отчет админу {admin_id}: {e}")
 
             try:
-                await context.bot.send_message(chat_id=group.group_id, text=report_text)
+                await context.bot.send_message(chat_id=group.group_id, text=report_text, message_thread_id=group.topic_id)
             except Exception as e:
                 print(f"Не удалось отправить сообщение в группу {group.group_id}: {e}")
 
