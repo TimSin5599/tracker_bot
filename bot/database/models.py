@@ -44,6 +44,7 @@ class DailyPushup(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'))
     group_id = Column(Integer, ForeignKey('groups.id'))
+    topic_id = Column(Integer, default=None)
     date = Column(Date, default=datetime.now().date)
     count = Column(Integer, default=0)
 

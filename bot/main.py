@@ -1,10 +1,12 @@
 import logging
 import asyncio
-from telegram.ext import Application
-from config.settings import settings
-from bot.handlers.commands import setup_command_handlers
-from bot.handlers.consent import setup_consent_handlers
+
+from aiogram import Dispatcher, Bot
+
+from bot.handlers import commands
 from bot.handlers.pushups import setup_pushups_handlers
+from config.settings import settings
+# from bot.handlers.pushups import setup_pushups_handlers
 from bot.database.storage import init_database
 from bot.utils.reminders import setup_reminders
 
@@ -27,37 +29,20 @@ async def main():
     # Инициализируем базу данных
     await init_database()
 
-    # Создаем приложение
-    application = Application.builder().token(settings.BOT_TOKEN).build()
+    bot = Bot(token=settings.BOT_TOKEN)
+    dp = Dispatcher()
+    setup_pushups_handlers(dp)
+    dp.include_router(commands.router)
 
-    # Настраиваем обработчики в правильном порядке
-    setup_pushups_handlers(application)  # ПЕРВЫМ - высокий приоритет
-    setup_command_handlers(application)
-    setup_consent_handlers(application)
-    # setup_tracking_handlers(application)
-    #
     # Настраиваем напоминания
-    setup_reminders(application)
-
+    setup_reminders(dp)
     # Запускаем бота
     logger.info("🤖 Бот запускается...")
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
+    await dp.start_polling(bot)
 
     logger.info("✅ Бот запущен и работает!")
     logger.info("⏰ Напоминания настроены: 22:00 и 00:00")
     logger.info("🔍 Режим отладки включен")
-
-    # Бесконечный цикл
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except KeyboardInterrupt:
-        logger.info("🛑 Остановка бота...")
-        await application.updater.stop()
-        await application.stop()
-        await application.shutdown()
 
 
 if __name__ == "__main__":

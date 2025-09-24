@@ -1,13 +1,15 @@
 from datetime import datetime, date
-from sqlalchemy import select, func, and_, delete
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, func, and_, delete, or_
+from sqlalchemy.orm import selectinload, aliased
 from bot.database.models import Base, User, Group, GroupPushupRecord, DailyPushup, user_group_association
 from bot.database.session import async_session
 from bot.database.session import engine
 import os
 
+from config.settings import settings
+
 # Создаем папку data если не существует
-os.makedirs(os.path.dirname("data/database.db"), exist_ok=True)  # или используйте settings.DB_PATH
+os.makedirs(os.path.dirname(settings.DB_PATH), exist_ok=True)  # или используйте settings.DB_PATH
 
 async def init_database():
     """Инициализация базы данных"""
@@ -42,16 +44,21 @@ async def get_or_create_group(group_id: str, group_name: str = None, topic_id: s
     """Получает или создает группу без передачи session"""
     async with async_session() as session:
         result = await session.execute(
-            select(Group).where(Group.group_id == group_id)
+            select(Group)
+            .where(Group.group_id == group_id)
         )
         group = result.scalar_one_or_none()
+
 
         if not group:
             group = Group(
                 group_id=group_id,
-                topic_id=topic_id,
                 group_name=group_name,
-                created_at=datetime.now()
+                created_at=date.today(),
+                is_topics_enabled=0,
+                topic_id=topic_id,
+                total_pushups=0,
+                last_activity=None
             )
             session.add(group)
             await session.commit()
@@ -231,26 +238,26 @@ async def get_today_pushups(user_id: int, group_id: str):
         return count
 
 
-async def set_circle_weight(user_id: int, weight: int):
-    async with async_session() as session:
-        result = await session.execute(
-            select(User).where(User.user_id == user_id)
-        )
-        user = result.scalar_one_or_none()
-        if user:
-            user.circle_weight = weight
-            await session.commit()
-            return True
-        return False
+# async def set_circle_weight(user_id: int, weight: int):
+#     async with async_session() as session:
+#         result = await session.execute(
+#             select(User).where(User.user_id == user_id)
+#         )
+#         user = result.scalar_one_or_none()
+#         if user:
+#             user.circle_weight = weight
+#             await session.commit()
+#             return True
+#         return False
 
 
-async def get_circle_weight(user_id: int):
-    async with async_session() as session:
-        result = await session.execute(
-            select(User.circle_weight).where(User.user_id == user_id)
-        )
-        weight = result.scalar_one_or_none()
-        return weight or 1
+# async def get_circle_weight(user_id: int):
+#     async with async_session() as session:
+#         result = await session.execute(
+#             select(User.circle_weight).where(User.user_id == user_id)
+#         )
+#         weight = result.scalar_one_or_none()
+#         return weight or 1
 
 
 async def get_pushup_stats(user_id: int = None, group_id: str = None):
@@ -338,21 +345,34 @@ async def get_pushup_stats(user_id: int = None, group_id: str = None):
             raise ValueError("Необходимо указать хотя бы user_id или group_id")
 
 
-async def get_users_without_pushups_today(group_id: str):
-    async with async_session() as session:
-        group = await get_or_create_group(group_id)
+async def get_users_without_pushups_today(group: Group):
+    async with (async_session() as session):
         today = date.today()
 
-        subquery = select(DailyPushup.user_id).where(
-            DailyPushup.group_id == group.id,
-            DailyPushup.date == today
-        ).subquery()
+        subquery = (
+            select(DailyPushup.user_id,
+                   func.coalesce(func.sum(DailyPushup.count), 0).label("total_pushups")
+            )
+            .where(
+    DailyPushup.group_id == group.group_id,
+                DailyPushup.topic_id == group.topic_id,
+                DailyPushup.date == today,
+            )
+            .group_by(DailyPushup.user_id)
+            .subquery()
+        )
+
+        daily_sum = aliased(subquery)
 
         result = await session.execute(
             select(User)
             .join(user_group_association, User.id == user_group_association.c.user_id)
             .where(user_group_association.c.group_id == group.id)
-            .where(~User.id.in_(subquery))
+            .outerjoin(daily_sum, User.id == daily_sum.c.user_id)
+            .where(
+                or_(daily_sum.c.total_pushups == None,
+                daily_sum.c.total_pushups < settings.REQUIRED_PUSHUPS)
+            )
         )
         users = result.scalars().all()
         return users
@@ -376,18 +396,14 @@ async def update_user_activity(
         await session.commit()
 
 # --- Пользовательское согласие ---
-async def save_user_consent(user_id: int, username: str, first_name: str, has_consent: bool):
+async def save_user_consent(user_id: int, username: str | None, first_name: str | None):
     """Сохраняет согласие пользователя на участие. Если согласие уже дано, возвращает соответствующее сообщение"""
     async with async_session() as session:
         user = await get_or_create_user(user_id, username, first_name)
-        if has_consent and user.has_consent:
-            # Пользователь уже дал согласие
-            return "✅ Вы уже дали согласие на участие."
 
-        user.has_consent = has_consent
-        user.last_activity = datetime.now() if has_consent else None
+        user.last_activity = datetime.now()
         await session.commit()
-        return "✅ Согласие сохранено." if has_consent else "❌ Согласие отменено."
+        return "✅ Согласие сохранено."
 
 async def reset_daily_pushups():
     """

@@ -1,3 +1,4 @@
+from aiogram import Dispatcher
 from sklearn.metrics import mean_squared_log_error
 
 from bot.database.session import async_session
@@ -45,7 +46,7 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
         groups = groups.scalars().all()
 
         for group in groups:
-            users_without_pushups = await get_users_without_pushups_today(group_id=group.group_id)
+            users_without_pushups = await get_users_without_pushups_today(group=group)
 
             if users_without_pushups:
                 report_text = "📊 Отчет за день:\n\n"
@@ -53,14 +54,6 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
 
                 for user in users_without_pushups:
                     report_text += f"• {user.username or user.first_name}\n"
-
-                # Отправляем отчет админам
-                # for admin_id in settings.ADMIN_IDS:
-                #     print("ADMIN_IDS:", settings.ADMIN_IDS, type(settings.ADMIN_IDS))
-                #     try:
-                #         await context.bot.send_message(chat_id=admin_id, text=report_text)
-                #     except Exception as e:
-                #         print(f"Не удалось отправить отчет админу {admin_id}: {e}")
 
             try:
                 await context.bot.send_message(chat_id=group.group_id, text=report_text, message_thread_id=group.topic_id)
@@ -72,18 +65,18 @@ async def send_daily_report(context: ContextTypes.DEFAULT_TYPE):
             await reset_daily_pushups()
 
 
-def setup_reminders(application):
+def setup_reminders(dp: Dispatcher):
     """Настройка напоминаний"""
     # Напоминание за 2 часа до конца дня (22:00)
-    application.job_queue.run_daily(
-        send_reminders,
-        time(hour=22, minute=00, tzinfo=MOSCOW_TZ),  # 22:00
-        name="daily_reminders"
-    )
-
-    # Отчет в полночь (00:00)
-    application.job_queue.run_daily(
-        send_daily_report,
-        time(hour=0, minute=0, tzinfo=MOSCOW_TZ),  # 00:00
-        name="daily_report"
-    )
+    # dp.create_task.run_daily(
+    #     send_reminders,
+    #     time(hour=22, minute=00, tzinfo=MOSCOW_TZ),  # 22:00
+    #     name="daily_reminders"
+    # )
+    #
+    # # Отчет в полночь (00:00)
+    # application.job_queue.run_daily(
+    #     send_daily_report,
+    #     time(hour=0, minute=0, tzinfo=MOSCOW_TZ),  # 00:00
+    #     name="daily_report"
+    # )

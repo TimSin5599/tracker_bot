@@ -1,37 +1,22 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CommandHandler
+from aiogram import F, Router
+from aiogram.filters import Command, CommandStart
+from aiogram.types import CallbackQuery, Message
+from bot.database.session import async_session
 from bot.database.storage import (
     get_group_stats,
     get_users_without_pushups_today,
-    update_user_activity, get_pushup_stats
+    update_user_activity, get_pushup_stats, save_user_consent, get_or_create_group
 )
 
-async def start_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [
-            InlineKeyboardButton("Добавить отжимания", callback_data="add_pushups"),
-            InlineKeyboardButton("Посмотреть статистику", callback_data="stats"),
-        ],
-        [
-            InlineKeyboardButton("Помощь", callback_data="help"),
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+router = Router()
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@router.message(CommandStart())
+async def start_command(message: Message):
     """Обработчик команды /start"""
-    keyboard = [
-        [InlineKeyboardButton("✅ Согласиться на отслеживание", callback_data="consent_yes")],
-        [InlineKeyboardButton("❌ Отказаться", callback_data="consent_no")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    user = update.effective_user
-    chat = update.effective_chat
-    topic_id = update.message.message_thread_id
-
-    from bot.database.session import async_session  # import sessionmaker
+    user = message.from_user
+    chat = message.chat
+    topic_id = message.message_thread_id
 
     async with async_session() as session:
         await update_user_activity(
@@ -44,18 +29,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             topic_id=topic_id,
         )
 
-    await update.message.reply_text(
+    await save_user_consent(user.id, user.username, user.first_name)
+
+    await message.answer(
         "👋 Привет! Я бот для отслеживания отжиманий!\n\n"
         "Я помогу вам:\n"
         "• Вести статистику отжиманий 📊\n"
         "• Напоминать об отжиманиях ⏰\n"
         "• Следить за прогрессом 🏆\n\n"
-        "Для работы мне нужно ваше согласие на отслеживание активности:",
-        reply_markup=reply_markup
     )
 
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@router.message(Command(commands='help'))
+async def help_command(message: Message):
     """Обработчик команды /help"""
     help_text = """
     📋 Доступные команды:
@@ -72,16 +57,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Просто отправляйте кружочки в чат: ○ ⚪ ⭕ 🔵
     1 кружок = N отжиманий
     """
-    await update.message.reply_text(help_text)
+    await message.answer(help_text)
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@router.message(Command(commands='stats'))
+async def stats_command(message: Message):
     """Команда /stats - полная статистика (только по отжиманиям)"""
-    group_id = update.effective_chat.id if update.effective_chat else None
-    user_id = update.effective_user.id if update.effective_user else None
+    group_id = message.chat.id if message.chat else None
+    user_id = message.from_user.id if message.from_user else None
     pushup_stats = await get_pushup_stats(group_id=group_id, user_id=user_id)
 
     if not pushup_stats:
-        await update.message.reply_text("📊 Нет данных для отображения")
+        await message.answer("📊 Нет данных для отображения")
         return
 
     response = "📊 ПОЛНАЯ СТАТИСТИКА\n\n"
@@ -98,21 +84,22 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += f"   📅 Сегодня: {user['today_pushups']}\n"
             response += f"   🏋️ Всего: {user['total_pushups']}\n"
 
-    await update.message.reply_text(response)
+    await message.answer(response)
 
-async def stats_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@router.message(Command(commands='group_stats'))
+async def stats_group_command(message: Message):
     """Команда /group_stats - статистика текущей группы"""
-    if update.effective_chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ Эта команда работает только в группах!")
+    if message.chat.type not in ['group', 'supergroup']:
+        await message.answer("❌ Эта команда работает только в группах!")
         return
 
-    chat_id = str(update.effective_chat.id)
+    chat_id = str(message.chat.id)
 
     try:
         stats = await get_group_stats(chat_id)
 
         if not stats or not stats['members']:
-            await update.message.reply_text("📊 В группе пока нет данных об отжиманиях")
+            await message.answer("📊 В группе пока нет данных об отжиманиях")
             return
 
         response = f"🏆 Статистика группы {stats['group_name']}:\n\n"
@@ -123,26 +110,30 @@ async def stats_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         for i, member in enumerate(stats['members'][:10], 1):
             response += f"{i}. {member['username']}: {member['today_pushups']} отжиманий\n"
 
-        await update.message.reply_text(response)
+        await message.answer(response)
 
     except Exception as e:
-        await update.message.reply_text("❌ Ошибка при получении статистики")
+        await message.answer("❌ Ошибка при получении статистики")
         print(f"Error in stats_command: {e}")
 
-
-async def lazy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@router.message(Command(commands='lazy'))
+async def lazy_command(message: Message):
     """Команда /lazy - показать кто не сделал отжимания сегодня"""
-    if update.effective_chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("❌ Эта команда работает только в группах!")
+    if message.chat.type not in ['group', 'supergroup']:
+        await message.answer("❌ Эта команда работает только в группах!")
         return
 
-    chat_id = str(update.effective_chat.id)
+    group_id = str(message.chat.id)
+    topic_id = message.message_thread_id
+
+    # print(f"group_id: {update.effective_chat.id}, thread_id: {update.message.message_thread_id}")
+    group = await get_or_create_group(group_id=group_id, topic_id=topic_id)
 
     try:
-        lazy_users = await get_users_without_pushups_today(group_id=chat_id)
+        lazy_users = await get_users_without_pushups_today(group=group)
 
         if not lazy_users:
-            await update.message.reply_text("✅ Сегодня все уже сделали отжимания! Молодцы! 🏆")
+            await message.answer("✅ Сегодня все уже сделали отжимания! Молодцы! 🏆")
             return
 
         response = "😴 Еще не сделали отжимания сегодня:\n\n"
@@ -151,17 +142,8 @@ async def lazy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         response += "\nНе забудьте сделать отжимания! 💪"
 
-        await update.message.reply_text(response)
+        await message.answer(response)
 
     except Exception as e:
-        await update.message.reply_text("❌ Ошибка при получении данных")
+        await message.answer("❌ Ошибка при получении данных")
         print(f"Error in lazy_command: {e}")
-
-
-def setup_command_handlers(application):
-    """Регистрация обработчиков команд"""
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("group_stats", stats_group_command))
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("lazy", lazy_command))
