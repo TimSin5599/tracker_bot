@@ -1,6 +1,8 @@
 from datetime import datetime, date
 from sqlalchemy import select, func, and_, delete, or_
 from sqlalchemy.orm import selectinload, aliased
+from sqlalchemy.sql.sqltypes import NULLTYPE
+
 from bot.database.models import Base, User, Group, GroupPushupRecord, DailyPushup, user_group_association
 from bot.database.session import async_session
 from bot.database.session import engine
@@ -55,7 +57,7 @@ async def get_or_create_group(group_id: str, group_name: str = None, topic_id: s
                 group_id=group_id,
                 group_name=group_name,
                 created_at=date.today(),
-                is_topics_enabled=0,
+                is_topics_enabled=False,
                 topic_id=topic_id,
                 total_pushups=0,
                 last_activity=None
@@ -116,6 +118,7 @@ async def add_pushups(user_id: int, group_id: str, count: int = 1, group_name: s
             daily_record = DailyPushup(
                 user_id=user.id,
                 group_id=group.id,
+                topic_id=topic_id if topic_id else None,
                 date=today,
                 count=actual_count
             )
@@ -396,7 +399,7 @@ async def update_user_activity(
         await session.commit()
 
 # --- Пользовательское согласие ---
-async def save_user_consent(user_id: int, username: str | None, first_name: str | None):
+async def save_user_consent(user_id: int, username: str, first_name: str):
     """Сохраняет согласие пользователя на участие. Если согласие уже дано, возвращает соответствующее сообщение"""
     async with async_session() as session:
         user = await get_or_create_user(user_id, username, first_name)

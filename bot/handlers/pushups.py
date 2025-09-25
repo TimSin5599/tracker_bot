@@ -1,5 +1,5 @@
 import re
-from aiogram import Router, types, Dispatcher
+from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -10,7 +10,9 @@ from bot.database.models import Group
 from bot.database.session import async_session
 from bot.database.storage import add_pushups
 
+router = Router()
 
+@router.message(F.video_note)
 async def handle_pushup_video_note(message: Message, state: FSMContext):
     """Обработка видео-кружочка - спрашиваем количество с удобными кнопками"""
     if not message or not message.from_user:
@@ -64,8 +66,8 @@ async def handle_pushup_video_note(message: Message, state: FSMContext):
 
         print(f"📹 Установлены состояния после видео: {state}")
 
-
-async def handle_pushup_count_callback(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data.startswith("pushup_"))
+async def handle_pushup_count_callback(callback: CallbackQuery, state: FSMContext, bot: Bot):
     """Обработка выбора количества отжиманий через кнопки"""
     await callback.answer()
 
@@ -73,7 +75,7 @@ async def handle_pushup_count_callback(callback: CallbackQuery, state: FSMContex
     # callback_data = query.data
     # print(f"🔔 Получен callback: {callback_data}")
 
-    group_id = callback.chat if callback else None
+    group_id = callback.message.chat.id if callback.message else None
 
     count_str = callback.data.split('_')[1]
 
@@ -82,23 +84,21 @@ async def handle_pushup_count_callback(callback: CallbackQuery, state: FSMContex
         print("🔔 Запрошен ввод своего числа")
 
         keyboard = [
-            [InlineKeyboardButton("Отмена", callback_data="pushup_cancel")]
+            [InlineKeyboardButton(text="Отмена", callback_data="pushup_cancel")]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
         # ОЧИЩАЕМ предыдущие состояния и устанавливаем новое
         await state.clear()  # Очищаем все предыдущие состояния
         await state.set_data({
             'awaiting_exact_count': True,
             'user_id': user_id,
-            'last_bot_message_id': callback.message.message_id
+            'bot_msg_id': callback.message.message_id,
         })
 
-        # context.user_data['last_bot_message_id'] = update.callback_query.message.message_id
+        print(f"🔔 Установлены состояния: {await state.get_data()}")
 
-        print(f"🔔 Установлены состояния: {state}")
-
-        await callback.edit_text(
+        await callback.message.edit_text(
             "🔢 Введите точное количество отжиманий:\n\n"
             "Отправьте число сообщением\n"
             "Примеры: 15, 30, 42\n\n",
@@ -109,7 +109,7 @@ async def handle_pushup_count_callback(callback: CallbackQuery, state: FSMContex
     elif count_str == '0' or count_str == 'cancel':
         # Для кнопки "Пропустить" - просто удаляем сообщение
         print("🔔 Пропуск подхода - удаляем сообщение")
-        await callback.delete()
+        await callback.message.delete()
         await state.clear()
         return
 
@@ -117,10 +117,10 @@ async def handle_pushup_count_callback(callback: CallbackQuery, state: FSMContex
         # Для числовых кнопок обрабатываем как обычно
         count = int(count_str)
         print(f"🔔 Обрабатываем {count} отжиманий")
-        await process_pushup_count(callback, user_id, count, group_id.id)
+        await process_pushup_count(bot, callback.message.message_id, group_id, callback.message.message_thread_id, user_id, count)
 
-
-async def handle_pushup_text_input(message: Message, state: FSMContext):
+@router.message(F.text)
+async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot):
     """Обработка текстового ввода количества отжиманий"""
     print("🎯 handle_pushup_text_input ВЫЗВАН!")
 
@@ -135,14 +135,13 @@ async def handle_pushup_text_input(message: Message, state: FSMContext):
     text = message.text.strip()
 
     print(f"🔍 Получен текст от user_id={user_id}: '{text}'")
-    print(f"🔍 ВСЕ user_data: {message.user_data}")
+    print(f"🔍 ВСЕ user_data: {message.from_user}")
 
     # ПРОВЕРЯЕМ СОСТОЯНИЯ
-    awaiting_exact = state.get_value('awaiting_exact_count')
-    awaiting_pushup = state.get_value('awaiting_pushup_count')
-    user_id_in_context = state.get_value('user_id')
+    awaiting_exact = await state.get_value('awaiting_exact_count')
+    user_id_in_context = await state.get_value('user_id')
 
-    print(f"🔍 Состояния: exact={awaiting_exact}, pushup={awaiting_pushup}, context_user_id={user_id_in_context}")
+    print(f"🔍 Состояния: exact={awaiting_exact}, context_user_id={user_id_in_context}")
 
     # ПРИОРИТЕТ: сначала exact, потом pushup
     if awaiting_exact and user_id_in_context == user_id:
@@ -152,11 +151,14 @@ async def handle_pushup_text_input(message: Message, state: FSMContext):
 
             if count == 0:
                 user_msg_id = message.message_id
-                bot_msg_id = message.user_data.get('last_bot_message_id')
+                bot_msg_id = await state.get_value('bot_msg_id')
 
                 await message.delete()
                 if bot_msg_id:
-                    await message.chat.delete_message(bot_msg_id)
+                    await bot.delete_message(
+                        chat_id=message.chat.id,
+                        message_id=bot_msg_id
+                    )
 
                 message.user_data.clear()
                 print("✅ Удалено сообщение пользователя и сообщение бота, состояние очищено")
@@ -171,17 +173,11 @@ async def handle_pushup_text_input(message: Message, state: FSMContext):
                 return
 
             # Получаем group_id
-            group_id = message.effective_chat.id if message.effective_chat else None
+            group_id = message.chat.id if message.chat else None
+            bot_message_id = await state.get_value('bot_msg_id')
             # ПЕРЕДАЕМ update, user_id, count, group_id
-            await process_pushup_count(message, user_id, count, group_id)
-
-            if count > 0 and count < 200:
-                user_msg_id = message.message_id
-                bot_msg_id = message.user_data.get('last_bot_message_id')
-
-                if bot_msg_id:
-                    await message.chat.delete_message(bot_msg_id)
-                await message.chat.delete_message(user_msg_id)
+            await process_pushup_count(bot, bot_message_id, group_id, message.message_thread_id, user_id, count)
+            await message.chat.delete_message(message.message_id)
 
             # Очищаем состояние
             await state.clear()
@@ -190,38 +186,15 @@ async def handle_pushup_text_input(message: Message, state: FSMContext):
         except ValueError:
             await message.reply_text("❌ Пожалуйста, введите число (например: 15, 30, 42)")
 
-    elif awaiting_pushup:
-        print("🔍 Обрабатываем как число после кружочка...")
-        try:
-            count = int(text)
-            if count < 0:
-                await message.reply_text("❌ Число не может быть отрицательным")
-                return
-
-            if count > 200:
-                await message.reply_text("❌ Слишком большое число. Максимум 200")
-                return
-
-            group_id = message.effective_chat.id if message.effective_chat else None
-            # ПЕРЕДАЕМ update, user_id, count, group_id
-            await process_pushup_count(message, user_id, count, group_id)
-
-            # Очищаем состояние
-            await state.clear()
-            print("✅ Состояние очищено")
-
-        except ValueError:
-            await message.reply_text("❌ Пожалуйста, введите число или используйте кнопки")
-
     else:
         print("🔍 Не ожидаем ввод, проверяем на текстовые кружочки...")
-        await handle_pushup_text_circles(message)
+        await handle_pushup_text_circles(message, state)
 
 
-async def process_pushup_count(callback: CallbackQuery, user_id, count, group_id):
+async def process_pushup_count(bot: Bot, bot_message_id, group_id, topic_id, user_id, count):
     """Обработка введенного количества отжиманий"""
 
-    today_total, actual_count, used_weight = await add_pushups(user_id, group_id, count)
+    today_total, actual_count, used_weight = await add_pushups(user_id=user_id, group_id=group_id, count=count, topic_id=topic_id)
 
     if count <= 15:
         emoji = "👶"
@@ -237,14 +210,17 @@ async def process_pushup_count(callback: CallbackQuery, user_id, count, group_id
         level = "Экспертный уровень"
 
     # ПРАВИЛЬНО определяем как отвечать
-    await callback.message.edit_text(
+    await bot.edit_message_text(
+        chat_id=group_id,
+        message_id=bot_message_id,
+        text=
         f"{emoji} {level}\n"
         f"✅ Засчитано: {actual_count} отжиманий!\n"
         f"📊 Сегодня: {today_total} отжиманий\n"
         f"🎯 Отличная работа! Продолжайте в том же духе!"
     )
 
-
+@router.message(Command(commands='/cancel'))
 async def cancel_command(message: Message, state: FSMContext):
     """Команда отмены ввода"""
     # Очищаем состояние
@@ -262,7 +238,7 @@ async def handle_pushup_text_circles(message: Message, state: FSMContext):
 
 
     # Проверяем, не ожидаем ли мы ввод числа
-    if state.get_value('awaiting_exact_count') or state.get_value('awaiting_pushup_count'):
+    if await state.get_value('awaiting_exact_count') or await state.get_value('awaiting_pushup_count'):
         print("🔍 Пропускаем текстовые кружочки - ожидаем ввод числа")
         return
 
@@ -280,41 +256,6 @@ async def handle_pushup_text_circles(message: Message, state: FSMContext):
             f"📊 Сегодня: {today_total} отжиманий\n"
             f"⚖️ Вес кружка: {used_weight}"
         )
-
-
-def setup_pushups_handlers(dp: Dispatcher):
-    """Регистрация обработчиков отжиманий"""
-    print("🔄 Регистрируем обработчики отжиманий...")
-
-    router = Router()
-
-    # 1. Callback обработчики (ВЫСОКИЙ приоритет)
-    router.message.register(
-        handle_pushup_count_callback,
-        lambda message: message.text is not None and not message.text.startswith("/pushup_")
-    )
-
-    # 2. Текстовые обработчики (НИЗКИЙ приоритет)
-    router.message.register(
-        handle_pushup_text_input,
-        lambda message: message.text is not None and not message.text.startswith("/")
-    )
-
-    # 3. Обработка видео и видеозаметок
-    router.message.register(
-        handle_pushup_video_note,
-        lambda message: message.video_note is not None or message.video is not None
-    )
-
-    # 4. Команды
-    print("📌 Регистрируем команды...")
-    # router.message.register(correct_pushups_command, Command(commands=["correct"]))
-    router.message.register(cancel_command, Command(commands=["cancel"]))
-
-    # Включаем router в Dispatcher
-    dp.include_router(router)
-
-    print("✅ Все обработчики зарегистрированы")
 
 
 # async def correct_pushups_command(message: Message):
