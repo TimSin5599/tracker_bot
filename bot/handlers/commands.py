@@ -7,6 +7,7 @@ from bot.database.storage import (
     get_users_without_pushups_today,
     update_user_activity, get_pushup_stats, save_user_consent, get_or_create_group
 )
+from config.settings import settings
 
 router = Router()
 
@@ -37,6 +38,7 @@ async def start_command(message: Message):
         "• Вести статистику отжиманий 📊\n"
         "• Напоминать об отжиманиях ⏰\n"
         "• Следить за прогрессом 🏆\n\n"
+        "Вам достаточно просто отправить кружок или ввести команду /add для подсчета отжиманий\n\n"
     )
 
 @router.message(Command(commands='help'))
@@ -138,9 +140,9 @@ async def lazy_command(message: Message):
 
         response = "😴 Еще не сделали отжимания сегодня:\n\n"
         for user in lazy_users:
-            response += f"• {user.username or user.first_name}\n"
+            response += f" • @{user.username} (осталось сделать - {int(settings.REQUIRED_PUSHUPS) - user.pushups_today})\n"
 
-        response += "\nНе забудьте сделать отжимания! 💪"
+        response += "\nДавайте чемпионы, все получится💪"
 
         await message.answer(response)
 

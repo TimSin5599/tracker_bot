@@ -7,6 +7,7 @@ from sqlalchemy import select
 from bot.database.models import Group
 from bot.database.session import async_session
 from bot.database.storage import get_users_without_pushups_today
+from config.settings import settings
 
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
@@ -25,7 +26,8 @@ async def send_reminders(bot: Bot):
                 # Если есть "прогульщики"
                 report_text = "⏰ Напоминание!\nДо конца дня осталось 2 часа.\n\n"
                 report_text += "❌ Эти пользователи ещё не сделали отжимания:\n"
-                report_text += "\n".join([u.username or u.first_name for u in users])
+                for user in users:
+                    report_text += f" • @{user['username']} (осталось сделать - {int(settings.REQUIRED_PUSHUPS) - user.pushups_today})"
             else:
                 # Все молодцы
                 report_text = "✅ Все молодцы! Сегодня все сделали отжимания 🎉"
@@ -51,7 +53,7 @@ async def send_daily_report(bot: Bot):
                 report_text += "❌ Не сделали отжимания сегодня:\n"
 
                 for user in users_without_pushups:
-                    report_text += f"• {user.username or user.first_name}\n"
+                    report_text += f" • @{user.username} (было сделано - {user.pushups_today})\n"
 
             try:
                 await bot.send_message(chat_id=group.group_id, text=report_text, message_thread_id=group.topic_id)
