@@ -12,7 +12,9 @@ from bot.database.storage import add_pushups
 
 router = Router()
 
+@router.message(Command(commands='add'))
 @router.message(F.video_note)
+@router.message(F.video)
 async def handle_pushup_video_note(message: Message, state: FSMContext):
     """Обработка видео-кружочка - спрашиваем количество с удобными кнопками"""
     if not message or not message.from_user:
@@ -36,35 +38,34 @@ async def handle_pushup_video_note(message: Message, state: FSMContext):
 
     user = message.from_user
 
-    if message.video_note or message.video:
-        # ОЧИЩАЕМ предыдущие состояния
-        await state.clear()
+    # ОЧИЩАЕМ предыдущие состояния
+    await state.clear()
 
-        # Удобные кнопки для разных уровней нагрузки
-        keyboard = [
-            [InlineKeyboardButton(text="15 отжиманий", callback_data="pushup_15"),
-             InlineKeyboardButton(text="30 отжиманий", callback_data="pushup_30")],
-            [InlineKeyboardButton(text="50 отжиманий", callback_data="pushup_50"),
-             InlineKeyboardButton(text="Другое число", callback_data="pushup_custom")],
-            [InlineKeyboardButton(text="⏭️ Пропустить", callback_data="pushup_0")]
-        ]
-        reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    # Удобные кнопки для разных уровней нагрузки
+    keyboard = [
+        [InlineKeyboardButton(text="15 отжиманий", callback_data="pushup_15"),
+         InlineKeyboardButton(text="30 отжиманий", callback_data="pushup_30")],
+        [InlineKeyboardButton(text="50 отжиманий", callback_data="pushup_50"),
+         InlineKeyboardButton(text="Другое число", callback_data="pushup_custom")],
+        [InlineKeyboardButton(text="⏭️ Пропустить", callback_data="pushup_0")]
+    ]
+    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-        await message.answer(
-            "💪 Сколько отжиманий вы сделали в этом подходе?\n\n"
-            "• Выберите стандартное количество\n"
-            "• Или введите своё число\n"
-            "• ⏭️ Пропустить",
-            reply_markup=reply_markup
-        )
+    await message.answer(
+        "💪 Сколько отжиманий вы сделали в этом подходе?\n\n"
+        "• Выберите стандартное количество\n"
+        "• Или введите своё число\n"
+        "• ⏭️ Пропустить",
+        reply_markup=reply_markup
+    )
 
-        # Сохраняем информацию о кружочке
-        await state.set_data({
-            "last_video_note": message.video_note,
-            'awaiting_pushup_count': True
-        })
+    # Сохраняем информацию о кружочке
+    await state.set_data({
+        "last_video_note": message.video_note,
+        'awaiting_pushup_count': True
+    })
 
-        print(f"📹 Установлены состояния после видео: {state}")
+    print(f"📹 Установлены состояния после видео: {state}")
 
 @router.callback_query(F.data.startswith("pushup_"))
 async def handle_pushup_count_callback(callback: CallbackQuery, state: FSMContext, bot: Bot):
@@ -160,7 +161,8 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
                         message_id=bot_msg_id
                     )
 
-                message.user_data.clear()
+                await state.clear()
+                await message.delete()
                 print("✅ Удалено сообщение пользователя и сообщение бота, состояние очищено")
                 return
 
@@ -184,7 +186,7 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
             print("✅ Состояние очищено")
 
         except ValueError:
-            await message.reply_text("❌ Пожалуйста, введите число (например: 15, 30, 42)")
+            await message.answer("❌ Пожалуйста, введите число (например: 15, 30, 42)")
 
     else:
         print("🔍 Не ожидаем ввод, проверяем на текстовые кружочки...")

@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from sqlalchemy import select, func, and_, delete, or_
+from sqlalchemy import select, func, and_, delete, or_, update
 from sqlalchemy.orm import selectinload, aliased
 from sqlalchemy.sql.sqltypes import NULLTYPE
 
@@ -138,6 +138,13 @@ async def add_pushups(user_id: int, group_id: str, count: int = 1, group_name: s
             .where(DailyPushup.user_id == user.id)
         )
         total_pushups = result_total.scalar_one_or_none() or 0
+
+        await session.execute(
+            update(User)
+            .where(User.user_id == user.user_id)
+            .values(pushups_total=User.pushups_total+actual_count)
+            .values(pushups_today=User.pushups_today+actual_count)
+        )
 
         await session.commit()
         return total_pushups, actual_count, weight
@@ -416,19 +423,19 @@ async def reset_daily_pushups():
     """
     async with async_session() as session:
         # Получаем всех пользователей
-        result = await session.execute(select(User.id, User.username, User.first_name))
+        result = await session.execute(select(User.id, User.username, User.first_name, User.pushups_today))
         all_users = result.all()
-
-        # Получаем пользователей, которые сделали отжимания
-        result_done = await session.execute(select(DailyPushup.user_id))
-        users_done_ids = {row.user_id for row in result_done.all()}
 
         # Пользователи, которые не сделали отжимания
         users_not_done = [
-            {"user_id": user.id, "username": user.username, "first_name": user.first_name}
+            {"user_id": user.id, "username": user.username, "first_name": user.first_name, "pushups_today": user.pushups_today}
             for user in all_users
-            if user.id not in users_done_ids
+            if user.pushups_today < settings.REQUIRED_PUSHUPS
         ]
+
+        await session.execute(
+            update(User).values(pushups_today=0)
+        )
 
         # Сбрасываем все записи отжиманий
         await session.execute(delete(DailyPushup))
