@@ -45,12 +45,13 @@ async def get_or_create_user(user_id: int, username: str, first_name: str, last_
 async def get_or_create_group(group_id: str, group_name: str = None, topic_id: str = None):
     """Получает или создает группу без передачи session"""
     async with async_session() as session:
+        print(group_id, group_name, topic_id)
         result = await session.execute(
             select(Group)
             .where(Group.group_id == group_id)
         )
         group = result.scalar_one_or_none()
-
+        print(group)
 
         if not group:
             group = Group(

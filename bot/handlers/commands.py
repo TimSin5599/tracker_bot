@@ -16,16 +16,16 @@ async def start_command(message: Message):
 
     user = message.from_user
     chat = message.chat
-    topic_id = message.message_thread_id
-
+    topic_id = message.message_thread_id if message else None
+    # print(f'chat_type - {chat.type}, chat_id - {chat.id}')
     async with async_session() as session:
         await update_user_activity(
             user_id=user.id,
             username=user.username,
             first_name=user.first_name,
             last_name=user.last_name,
-            group_id=str(chat.id) if chat.type in ['group', 'supergroup'] else None,
-            group_name=chat.title if chat.type in ['group', 'supergroup'] else None,
+            group_id=str(chat.id) if chat.type in ['group', 'supergroup', 'private'] else None,
+            group_name=chat.title if chat.type in ['group', 'supergroup', 'private'] else None,
             topic_id=topic_id,
         )
 
