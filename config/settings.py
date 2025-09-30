@@ -5,12 +5,13 @@ load_dotenv()
 
 
 class Settings:
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x]
-    DB_PATH = os.getenv("DB_PATH")
-    GROUP_ID = os.getenv("GROUP_ID")
-    TOPIC_ID = os.getenv("TOPIC_ID")
-    REQUIRED_PUSHUPS = os.getenv("REQUIRED_PUSHUPS")
+    BOT_TOKEN:          str = os.getenv("BOT_TOKEN")
+    DB_USER:            str = os.getenv("DB_USER")
+    DB_PASSWORD:        str = os.getenv("DB_PASSWORD")
+    DB_HOST:            str = os.getenv("DB_HOST")
+    DB_PORT:            int = os.getenv("DB_PORT")
+    DB_NAME:            str = os.getenv("DB_NAME")
+    REQUIRED_PUSHUPS:   int = os.getenv("REQUIRED_PUSHUPS")
 
 
 settings = Settings()

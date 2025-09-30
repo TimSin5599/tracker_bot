@@ -10,3 +10,4 @@ aiosqlite
 sqlalchemy
 pytz
 aiogram
+asyncpg
