@@ -7,6 +7,7 @@ from bot.database.session import async_session
 from bot.database.session import engine
 from config.settings import settings
 
+
 async def init_database():
     """Инициализация базы данных"""
     async with engine.begin() as conn:
@@ -334,13 +335,13 @@ async def get_user_stats(user_id: int, type_record_id: int):
 async def get_users_without_training_today(group: Group, training_type: str):
     async with (async_session() as session):
         training_type_id = await get_id_group_training_type(group.group_id, training_type)
-
-        today = date.today()
+        required_count = await get_required_count(group_id=group.group_id, training_type=training_type)
+        print(f'Required count: {required_count}, training_type_id: {training_type_id}')
 
         subquery = (
             select(DailyGroupRecords.user_id,
                    func.coalesce(func.sum(DailyGroupRecords.count), 0).label("count")
-            )
+                   )
             .where(
                 DailyGroupRecords.type_record_id == training_type_id,
             )
@@ -356,12 +357,13 @@ async def get_users_without_training_today(group: Group, training_type: str):
             .where(user_group_association.c.group_id == group.id)
             .outerjoin(daily_sum, User.id == daily_sum.c.user_id)
             .where(
-                or_(User.pushups_today == 0,
-                    User.pushups_today < int(settings.REQUIRED_PUSHUPS))
+                or_(DailyGroupRecords.count is None,
+                    DailyGroupRecords.count < int(required_count))
             )
         )
         users = result.scalars().all()
         return users
+
 
 async def update_user_activity(
         user_id: int,
@@ -378,6 +380,18 @@ async def update_user_activity(
             group = await get_or_create_group(group_id, group_name, topic_id)
             await add_user_to_group(user_id, group_id, group_name)
         await session.commit()
+
+
+async def get_required_count(group_id: str, training_type: str):
+    async with async_session() as session:
+        result = await session.execute(
+            select(RecordTypes.required)
+            .where(RecordTypes.group_id == group_id,
+                   RecordTypes.record_type == training_type)
+        )
+
+        required_count = result.scalar_one_or_none()
+        return required_count
 
 
 # --- Пользовательское согласие ---

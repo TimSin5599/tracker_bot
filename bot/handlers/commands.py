@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKe
 from bot.database.session import async_session
 from bot.database.storage import (
     update_user_activity, save_user_consent, get_or_create_group, get_all_types_training_group, add_training_type,
-    get_user_stats, get_users_without_training_today
+    get_user_stats, get_users_without_training_today, get_required_count
 )
 from bot.handlers.PossibleStates import PossibleStates
 from config.settings import settings
@@ -89,7 +89,7 @@ async def create_training_type(message: Message, state: FSMContext):
 
 @router.message(PossibleStates.choose_count)
 async def choose_count(message: Message, state: FSMContext):
-    training_type = str(state.get_value('training_type'))
+    training_type = str(await state.get_value('training_type'))
     group_id = str(message.chat.id)
     required_count = message.text.strip()
 
@@ -198,6 +198,7 @@ async def lazy_callback(callback: CallbackQuery, state: FSMContext):
     else:
         try:
             lazy_users = await get_users_without_training_today(group=group, training_type=training_type)
+            required_count = await get_required_count(group_id=group_id, training_type=training_type)
 
             if not lazy_users:
                 await callback.message.answer("✅ Сегодня все уже сделали отжимания! Молодцы! 🏆")
@@ -205,7 +206,7 @@ async def lazy_callback(callback: CallbackQuery, state: FSMContext):
 
             response = "😴 Еще не сделали отжимания сегодня:\n\n"
             for user in lazy_users:
-                response += f" • @{user.username} (осталось сделать - {int(settings.REQUIRED_PUSHUPS) - user.pushups_today})\n"
+                response += f" • @{user.username} (осталось сделать - {int(required_count) - user.count})\n"
 
             response += "\nДавайте чемпионы, все получится💪"
 
@@ -214,7 +215,7 @@ async def lazy_callback(callback: CallbackQuery, state: FSMContext):
 
         except Exception as e:
             await callback.message.answer("❌ Ошибка при получении данных")
-            print(f"Error in lazy_command: {e}")
+            print(f"Error in lazy_callback: {e}")
 
 # @router.message(Command(commands='remove'))
 # async def remove_command(message: Message):
