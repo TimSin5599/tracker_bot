@@ -7,6 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bot.handlers import commands
 from bot.handlers import pushups
 from bot.middlewares.TopicMiddleware import TopicMiddlewares
+from bot.utils.reminders import setup_reminders
 from config.settings import settings
 from bot.database.storage import init_database
 # from bot.utils.reminders import setup_reminders
@@ -41,7 +42,7 @@ async def main():
     dp.include_router(pushups.router)
 
     # Настраиваем напоминания
-    # setup_reminders(bot)
+    setup_reminders(bot)
     # Запускаем бота
     logger.info("🤖 Бот запускается...")
     await bot.delete_webhook(drop_pending_updates=True)
