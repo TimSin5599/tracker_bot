@@ -2,13 +2,14 @@ from aiogram import Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
+from numpy.core.defchararray import upper
+
 from bot.database.session import async_session
 from bot.database.storage import (
     update_user_activity, save_user_consent, get_or_create_group, get_all_types_training_group, add_training_type,
-    get_user_stats, get_users_without_training_today, get_required_count
+    get_user_stats, get_users_without_training_today, get_required_count, get_or_create_user, get_group_stats
 )
-from bot.handlers.PossibleStates import PossibleStates
-from config.settings import settings
+from bot.handlers.possible_states import PossibleStates
 
 router = Router()
 
@@ -65,6 +66,14 @@ async def help_command(message: Message):
 
 @router.message(Command(commands='add_type'))
 async def add_type(message: Message, state: FSMContext):
+    await get_or_create_user(user_id=message.from_user.id,
+                             username=message.from_user.username,
+                             first_name=message.from_user.first_name,
+                             last_name=message.from_user.last_name, )
+    await get_or_create_group(group_id=str(message.chat.id),
+                              group_name=message.chat.title,
+                              topic_id=message.message_thread_id)
+
     await state.set_state(PossibleStates.create_training_type)
     await message.answer(
         '''Введите наименование тренировки, которое вы хотите отслеживать'''
@@ -104,50 +113,61 @@ async def choose_count(message: Message, state: FSMContext):
 @router.message(Command(commands='stats'))
 async def stats_command(message: Message):
     """Команда /stats - полная статистика (только по отжиманиям)"""
+
+    await get_or_create_user(user_id=message.from_user.id,
+                             username=message.from_user.username,
+                             first_name=message.from_user.first_name,
+                             last_name=message.from_user.last_name, )
+    await get_or_create_group(group_id=str(message.chat.id),
+                              group_name=message.chat.title,
+                              topic_id=message.message_thread_id)
+
     user_id = message.from_user.id if message.from_user else None
-    pushup_stats = await get_user_stats(user_id=user_id, type_record_id=1) # ❌ Дополнить type_record_id
+    pushup_stats = await get_user_stats(user_id=user_id, group_id=str(message.chat.id))
 
     if not pushup_stats:
         await message.answer("📊 Нет данных для отображения")
         return
 
-    response = "📊 ПОЛНАЯ СТАТИСТИКА\n\n"
-    response += "🏆 ОТЖИМАНИЯ:\n"
-    response += f"{message.from_user.username}:\n"
-    response += f"   📅 Сегодня: {pushup_stats['today']}\n"
-    response += f"   🏋️ Всего: {pushup_stats['total']}\n"
+    response = f"📊 ПОЛНАЯ СТАТИСТИКА @{message.from_user.username}\n\n"
+    for key, value in pushup_stats.items():
+        response += f"🏆 {key}:\n"
+        response += f"   📅 Сегодня: {value['today']}\n"
+        response += f"   🏋️ Всего: {value['total']}\n\n"
 
     await message.answer(response)
 
-# @router.message(Command(commands='group_stats'))
-# async def stats_group_command(message: Message):
-#     """Команда /group_stats - статистика текущей группы"""
-#     if message.chat.type not in ['group', 'supergroup']:
-#         await message.answer("❌ Эта команда работает только в группах!")
-#         return
-#
-#     chat_id = str(message.chat.id)
-#
-#     try:
-#         stats = await get_group_stats(chat_id)
-#
-#         if not stats or not stats['members']:
-#             await message.answer("📊 В группе пока нет данных об отжиманиях")
-#             return
-#
-#         response = f"🏆 Статистика группы {stats['group_name']}:\n\n"
-#         response += f"Всего отжиманий: {stats['total_pushups']} 🏋️\n"
-#         response += f"Участников: {stats['member_count']} 👥\n\n"
-#         response += "Топ сегодня:\n"
-#
-#         for i, member in enumerate(stats['members'][:10], 1):
-#             response += f"{i}. {member['username']}: {member['today_pushups']} отжиманий\n"
-#
-#         await message.answer(response)
-#
-#     except Exception as e:
-#         await message.answer("❌ Ошибка при получении статистики")
-#         print(f"Error in stats_command: {e}")
+@router.message(Command(commands='group_stats'))
+async def stats_group_command(message: Message):
+    """Команда /group_stats - статистика текущей группы"""
+    if message.chat.type not in ['group', 'supergroup']:
+        await message.answer("❌ Эта команда работает только в группах!")
+        return
+
+    chat_id = str(message.chat.id)
+
+    try:
+        stats = await get_group_stats(chat_id)
+
+        if not stats:
+            await message.answer("📊 В группе пока нет данных об отжиманиях")
+            return
+
+        response = f"🏆 Статистика группы {message.chat.title}:\n\n"
+        response += f"Участников: {len(stats.items())} 👥\n\n"
+
+        for user, user_stats in stats.items():
+            response += f"@{user}:\n"
+            for type, type_stats in user_stats.items():
+                if type == 'total_size_trainings': continue
+                response += f"    • {upper(type)}:\n        Сегодня - {type_stats['today']}, всего - {type_stats['total']}\n"
+            total_size_trainings = user_stats['total_size_trainings']
+            response += f"\n    Общее число выполненных упражнений - {total_size_trainings}\n"
+        await message.answer(response)
+
+    except Exception as e:
+        await message.answer("❌ Ошибка при получении статистики")
+        print(f"Error in stats_command: {e}")
 
 # @router.message(Command(commands='change_required'))
 # async def change_required(message: Message, state: FSMContext):
@@ -159,6 +179,14 @@ async def lazy_command(message: Message, state: FSMContext):
     if message.chat.type not in ['group', 'supergroup']:
         await message.answer("❌ Эта команда работает только в группах!")
         return
+
+    await get_or_create_user(user_id=message.from_user.id,
+                             username=message.from_user.username,
+                             first_name=message.from_user.first_name,
+                             last_name=message.from_user.last_name, )
+    await get_or_create_group(group_id=str(message.chat.id),
+                              group_name=message.chat.title,
+                              topic_id=message.message_thread_id)
 
     all_types_training_group = await get_all_types_training_group(group_id=str(message.chat.id))
 
@@ -181,41 +209,27 @@ async def lazy_command(message: Message, state: FSMContext):
     await state.clear()
     await state.set_state(PossibleStates.choose_training_type)
 
-@router.callback_query(PossibleStates.choose_training_type)
-async def lazy_callback(callback: CallbackQuery, state: FSMContext):
-    if callback.message.chat.type not in ['group', 'supergroup']:
-        await callback.message.answer("❌ Эта команда работает только в группах!")
+@router.message(Command(commands='types'))
+async def types_command(message: Message, state: FSMContext):
+    await get_or_create_user(user_id=message.from_user.id,
+                             username=message.from_user.username,
+                             first_name=message.from_user.first_name,
+                             last_name=message.from_user.last_name,)
+    await get_or_create_group(group_id=str(message.chat.id),
+                              group_name=message.chat.title,
+                              topic_id=message.message_thread_id)
+
+    all_types = await get_all_types_training_group(group_id=str(message.chat.id))
+
+    if all_types is None or len(all_types) == 0:
+        await message.answer(f'В группе отсутствуют тренировки для отслеживания\n'
+                             f'Чтобы добавить тренировку - введите /add_type')
         return
 
-    group_id = str(callback.message.chat.id)
-    topic_id = callback.message.message_thread_id
-    training_type = callback.data.split('_')[1]
-    group = await get_or_create_group(group_id=group_id, topic_id=topic_id)
-
-    if training_type == 'all':
-        await callback.message.edit_text('В разработке ...')
-        # TO DO
-    else:
-        try:
-            lazy_users = await get_users_without_training_today(group=group, training_type=training_type)
-            required_count = await get_required_count(group_id=group_id, training_type=training_type)
-
-            if not lazy_users:
-                await callback.message.answer("✅ Сегодня все уже сделали отжимания! Молодцы! 🏆")
-                return
-
-            response = "😴 Еще не сделали отжимания сегодня:\n\n"
-            for user in lazy_users:
-                response += f" • @{user.username} (осталось сделать - {int(required_count) - user.count})\n"
-
-            response += "\nДавайте чемпионы, все получится💪"
-
-            await callback.message.answer(response)
-            await state.clear()
-
-        except Exception as e:
-            await callback.message.answer("❌ Ошибка при получении данных")
-            print(f"Error in lazy_callback: {e}")
+    result = f"Все виды тренировок в группе {message.chat.title}:\n\n"
+    for type in all_types:
+        result += f" • {type}\n"
+    await message.answer(result)
 
 # @router.message(Command(commands='remove'))
 # async def remove_command(message: Message):

@@ -14,7 +14,7 @@ async def init_database():
         await conn.run_sync(Base.metadata.create_all)
 
 
-async def get_or_create_user(user_id: int, username: str, first_name: str, last_name: str = None):
+async def get_or_create_user(user_id: int, username: str = None, first_name: str = None, last_name: str = None):
     """Получает или создает пользователя без передачи session"""
     async with async_session() as session:
         result = await session.execute(
@@ -59,6 +59,18 @@ async def get_or_create_group(group_id: str, group_name: str = 'private', topic_
 
         return group
 
+async def get_users_from_group(group_id: str):
+    async with async_session() as session:
+        group = await get_or_create_group(group_id=group_id)
+        group_id_int: int = int(group.id)
+        print(f'\n\n\n{group_id_int}\n\n\n')
+        result = await session.execute(
+            select(User)
+            .join(user_group_association, User.id == user_group_association.c.user_id)
+            .where(group_id_int == user_group_association.c.group_id)
+        )
+        users = result.scalars().all()
+        return users
 
 async def add_user_to_group(user_id: int, group_id: str, group_name: str = None, topic_id: str = None):
     """Добавляет пользователя в группу, безопасно проверяя наличие"""
@@ -74,7 +86,7 @@ async def add_user_to_group(user_id: int, group_id: str, group_name: str = None,
 
 async def add_pushups(user_id: int,
                       group_id: str,
-                      type_record_id: int,
+                      type_record: str,
                       group_name: str = None,
                       topic_id: str = None,
                       count: int = 0):
@@ -83,6 +95,7 @@ async def add_pushups(user_id: int,
     async with async_session() as session:
         user = await get_or_create_user(user_id, "", "")
         group = await get_or_create_group(group_id, group_name, topic_id)
+        type_record_id = await get_id_group_training_type(group_id=group_id, training_type=type_record)
         await add_user_to_group(user_id, group_id, group_name, topic_id)
 
         # Ежедневная запись пользователя из группы по конкретному типу тренировки
@@ -136,7 +149,7 @@ async def add_pushups(user_id: int,
         result = await session.execute(
             select(UsersRecords.summary_count).where(
                 UsersRecords.user_id == user_id,
-                GroupsRecords.type_record_id == type_record_id
+                UsersRecords.type_record_id == type_record_id
             )
         )
         summary_record = result.scalar_one_or_none()
@@ -147,10 +160,11 @@ async def add_pushups(user_id: int,
             await session.execute(
                 update(UsersRecords)
                 .where(UsersRecords.user_id == user_id,
-                       GroupsRecords.type_record_id == type_record_id)
+                       UsersRecords.type_record_id == type_record_id)
                 .values(summary_count=summary_record)
             )
         else:
+            summary_record = count
             user_record = UsersRecords(
                 user_id=user_id,
                 type_record_id=type_record_id,
@@ -158,10 +172,9 @@ async def add_pushups(user_id: int,
             )
             session.add(user_record)
 
-        total_user_record = summary_record if not None else count
         await session.commit()
 
-        return total_user_record, count
+        return summary_record, count
 
 
 async def get_id_group_training_type(group_id: str, training_type: str):
@@ -171,7 +184,7 @@ async def get_id_group_training_type(group_id: str, training_type: str):
             .where(RecordTypes.group_id == group_id)
             .where(RecordTypes.record_type == training_type)
         )
-        training_type_id = result.scalar_one_or_none()
+        training_type_id = result.scalar_one_or_none() or 0
         return training_type_id
 
 
@@ -196,61 +209,32 @@ async def add_training_type(group_id: str, training_type: str, required_count: i
         await session.commit()
 
 
-async def get_group_stats(group_id: str, training_type: str):
-    """Получение статистики по отжиманиям в группе"""
+async def get_group_stats(group_id: str, training_type: str = None):
+    """Получение статистики по тренировкам в группе"""
     async with async_session() as session:
         group = await get_or_create_group(group_id)
-        training_type_id = await get_id_group_training_type(group_id, training_type)
+        users = await get_users_from_group(group_id)
 
-        # Подгружаем участников
-        group = await session.get(Group, group.id, options=[selectinload(Group.members)])
+        if training_type:
+            # training_type_id = await get_id_group_training_type(group_id, training_type)
+            # TO DO:
+            print()
+        else:
+            try:
+                group_stats = {}
+                for user in users:
+                    user_stats = await get_user_stats(user.user_id, group.group_id)
+                    total_size_trainings = 0
+                    for type, stats in user_stats.items():
+                            total_size_trainings += int(stats['today'])
+                    user_stats['total_size_trainings'] = total_size_trainings
+                    group_stats[user.username] = user_stats
+            except Exception as e:
+                print(e)
+        return dict(sorted(group_stats.items(), key=lambda x: x[1]['total_size_trainings'], reverse=True))
 
-        # Получаем статистику по участникам группы
-        result = await session.execute(
-            select(User, func.sum(DailyGroupRecords.count).label('today'))
-            .join(user_group_association, User.id == user_group_association.c.user_id)
-            .join(Group, Group.id == user_group_association.c.group_id)
-            .join(DailyGroupRecords, and_(DailyGroupRecords.user_id == User.id,
-                                          DailyGroupRecords.group_id == Group.id))
-            .where(Group.group_id == group_id,
-                   DailyGroupRecords.type_record_id == training_type_id)
-            .group_by(User.id)
-        )
-
-        today_stats = result.all()
-
-        # Получаем общую статистику по группе
-        result = await session.execute(
-            select(User, func.sum(GroupsRecords.summary_count).label('total_pushups'))
-            .join(user_group_association, User.id == user_group_association.c.user_id)
-            .join(Group, Group.id == user_group_association.c.group_id)
-            .where(Group.group_id == group_id)
-            .group_by(User.id)
-        )
-
-        total_stats = result.all()
-
-        # Формируем объединенную статистику
-        stats = []
-        for user, total in total_stats:
-            today = next((today for u, today in today_stats if u.id == user.id), 0)
-            print(f'user - {user.username}, total - {total}, today - {today}')
-            stats.append({
-                'user_id': user.user_id,
-                'username': user.username or user.first_name,
-                'today_pushups': today or 0,
-                'total_pushups': total or 0
-            })
-
-        return {
-            'group_name': group.group_name,
-            'total_pushups': group.total_pushups,
-            'member_count': len(group.members),
-            'members': sorted(stats, key=lambda x: x['today_pushups'], reverse=True)
-        }
-
-
-async def get_user_group_stats(user_id: int, group_id: str, training_type: str):
+# Получение статистики пользователя из определенной группы
+async def get_user_group_training_type_stats(user_id: int, group_id: str, training_type: str):
     async with async_session() as session:
         user = await get_or_create_user(user_id, "", "")
         group = await get_or_create_group(group_id)
@@ -260,20 +244,22 @@ async def get_user_group_stats(user_id: int, group_id: str, training_type: str):
         result = await session.execute(
             select(DailyGroupRecords.count)
             .where(DailyGroupRecords.user_id == user_id,
-                   DailyGroupRecords.group_id == group_id)
+                   DailyGroupRecords.group_id == group_id,
+                   DailyGroupRecords.type_record_id == training_type_id)
         )
         today = result.scalar_one_or_none() or 0
 
         result = await session.execute(
-            select(func.sum(GroupsRecords.summary_count))
-            .where(GroupsRecords.group_id == group.id,
-                   GroupsRecords.type_record_id == training_type_id)
+            select(func.sum(UsersRecords.summary_count))
+            .where(UsersRecords.user_id == user_id,
+                   UsersRecords.type_record_id == training_type_id)
         )
         total = result.scalar_one_or_none() or 0
 
         return {
             'user_id': user.user_id,
             'group_id': group.group_id,
+            'training_type': training_type,
             'today': today,
             'total': total
         }
@@ -306,30 +292,18 @@ async def get_total_records(user_id: int, type_record_id: int):
         return count
 
 
-async def get_user_stats(user_id: int, type_record_id: int):
+async def get_user_stats(user_id: int, group_id: str):
     async with async_session() as session:
         await get_or_create_user(user_id, "", "")
 
         # Результат за сегодня
-        result_today = await session.execute(
-            select(func.coalesce(func.sum(DailyGroupRecords.count), 0))
-            .where(DailyGroupRecords.user_id == user_id,
-                   DailyGroupRecords.type_record_id == type_record_id)
-        )
-        today_pushups = result_today.scalar_one_or_none() or 0
-
-        # Результат за все время
-        result_total = await session.execute(
-            select(func.coalesce(UsersRecords.summary_count, 0))
-            .where(UsersRecords.user_id == user_id,
-                   UsersRecords.type_record_id == type_record_id)
-        )
-        total_pushups = result_total.scalar_one_or_none() or 0
-
-        return {
-            'today': today_pushups,
-            'total': total_pushups
-        }
+        all_types = await get_all_types_training_group(group_id)
+        result = {}
+        for type in all_types:
+            result[type] = await get_user_group_training_type_stats(user_id=user_id,
+                                                      group_id=group_id,
+                                                      training_type=type)
+        return result
 
 
 async def get_users_without_training_today(group: Group, training_type: str):

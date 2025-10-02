@@ -8,8 +8,9 @@ from sqlalchemy import select
 from bot.database.models import Group
 
 from bot.database.session import async_session
-from bot.database.storage import add_pushups, get_all_types_training_group, get_id_group_training_type
-from bot.handlers.PossibleStates import PossibleStates
+from bot.database.storage import add_pushups, get_all_types_training_group, get_id_group_training_type, \
+    get_or_create_user, get_or_create_group
+from bot.handlers.possible_states import PossibleStates
 
 router = Router()
 
@@ -22,7 +23,8 @@ async def handle_select_trainig_type(message: Message, state: FSMContext):
         print("❌ Нет данных: update.message или from_user отсутствует")
         return
 
-    group_id = str(message.chat.id) if message.chat else None
+    group = await get_or_create_group(group_id=str(message.chat.id), group_name=message.chat.title, topic_id=message.message_thread_id)
+    group_id = group.group_id
     topic_id = message.message_thread_id if message else None
 
     async with async_session() as session:
@@ -50,7 +52,7 @@ async def handle_select_trainig_type(message: Message, state: FSMContext):
     keyboard = []
     for type in all_types_training_group:
         keyboard.append([InlineKeyboardButton(text=type, callback_data='type_'+type)])
-
+    keyboard.append([InlineKeyboardButton(text='⏭️ Пропустить', callback_data='type_cancel')])
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
     await message.answer(
@@ -66,6 +68,11 @@ async def handle_select_trainig_type(message: Message, state: FSMContext):
 async def handle_awaiting_type_training(callback: CallbackQuery, state: FSMContext):
     type_training = callback.data.split('_')[1]
     print(f'type_training: {type_training}, user_id={callback.from_user.id}')
+
+    if type_training == 'cancel':
+        await state.clear()
+        await callback.message.delete()
+        return
 
     keyboard = [
         [InlineKeyboardButton(text="10", callback_data="count_10"),
@@ -177,7 +184,9 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
 
     """Проверка что пользователь выполнял шаги до этого"""
     state_user_id = await state.get_value('user_id')
-    if state_user_id is None:
+    training_type = await state.get_value('training_type')
+
+    if state_user_id is None or training_type is None:
         return
 
     if state_user_id != message.from_user.id:
@@ -233,10 +242,16 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
             return
 
         # Получаем group_id
-        group_id = message.chat.id if message.chat else None
+        group_id = str(message.chat.id)
         bot_message_id = await state.get_value('bot_msg_id')
         # ПЕРЕДАЕМ update, user_id, count, group_id
-        await process_pushup_count(bot, bot_message_id, group_id, message.message_thread_id, user_id, count)
+        await process_pushup_count(bot=bot,
+                                   bot_message_id=bot_message_id,
+                                   group_id=group_id,
+                                   topic_id=message.message_thread_id,
+                                   user_id=user_id,
+                                   count=count,
+                                   training_type=training_type)
         await message.chat.delete_message(message.message_id)
 
         # Очищаем состояние
@@ -250,8 +265,8 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
 
 async def process_pushup_count(bot: Bot, bot_message_id, group_id: str, topic_id, user_id, count, training_type):
     """Обработка введенного количества отжиманий"""
-    training_type_id = await get_id_group_training_type(group_id=group_id, training_type=training_type)
-    today_total, actual_count = await add_pushups(user_id=user_id, group_id=group_id, type_record_id=training_type_id, count=count, topic_id=topic_id)
+    today_total, actual_count = await add_pushups(user_id=user_id, group_id=group_id, type_record=training_type, count=count, topic_id=topic_id)
+    user = await get_or_create_user(user_id=user_id)
 
     if count <= 15:
         emoji = "👶"
@@ -271,7 +286,7 @@ async def process_pushup_count(bot: Bot, bot_message_id, group_id: str, topic_id
         chat_id=group_id,
         message_id=bot_message_id,
         text=
-        f"{training_type}\n"
+        f" {training_type} пользователя @{user.username}\n\n"
         f"{emoji} {level}\n"
         f"✅ Засчитано: {actual_count}!\n"
         f"📊 Сегодня: {today_total}\n"
