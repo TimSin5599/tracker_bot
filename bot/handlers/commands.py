@@ -144,6 +144,14 @@ async def stats_group_command(message: Message):
         await message.answer("❌ Эта команда работает только в группах!")
         return
 
+    await get_or_create_user(user_id=message.from_user.id,
+                             username=message.from_user.username,
+                             first_name=message.from_user.first_name,
+                             last_name=message.from_user.last_name, )
+    await get_or_create_group(group_id=str(message.chat.id),
+                              group_name=message.chat.title,
+                              topic_id=message.message_thread_id)
+
     chat_id = str(message.chat.id)
 
     try:

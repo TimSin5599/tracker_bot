@@ -129,7 +129,7 @@ async def add_pushups(user_id: int,
 
         # Обновляем общую статистику группы
         result = await session.execute(
-            select(GroupsRecords.summary_count)
+            select(func.sum(GroupsRecords.summary_count))
             .where(GroupsRecords.group_id == group_id,
                    GroupsRecords.type_record_id == type_record_id)
         )
@@ -376,29 +376,38 @@ async def save_user_consent(user_id: int, username: str, first_name: str):
         await session.commit()
         return "✅ Согласие сохранено."
 
-# async def reset_daily_pushups():
-#     """
-#     Сбрасывает дневные счетчики отжиманий и возвращает список пользователей,
-#     которые не сделали отжимания сегодня.
-#     """
-#     async with async_session() as session:
-#         # Получаем всех пользователей
-#         result = await session.execute(select(User.id, User.username, User.first_name, User.pushups_today))
-#         all_users = result.all()
-#
-#         # Пользователи, которые не сделали отжимания
-#         users_not_done = [
-#             {"user_id": user.id, "username": user.username, "first_name": user.first_name, "pushups_today": user.pushups_today}
-#             for user in all_users
-#             if int(user.pushups_today) < int(settings.REQUIRED_PUSHUPS)
-#         ]
-#
-#         await session.execute(
-#             update(User).values(pushups_today=0)
-#         )
-#
-#         # Сбрасываем все записи отжиманий
-#         await session.execute(delete(DailyPushup))
-#         await session.commit()
-#
-#     return users_not_done
+async def get_users_without_pushups_today(group):
+    async with async_session() as session:
+        result = await session.execute(
+            select(
+                User.username,
+                RecordTypes.record_type,
+                RecordTypes.required,
+                DailyGroupRecords.count
+            )
+            .select_from(User)
+            .join(user_group_association, User.id == user_group_association.c.user_id)
+            .join(RecordTypes, RecordTypes.group_id == group.group_id)
+            .outerjoin(DailyGroupRecords, and_(
+                User.user_id == DailyGroupRecords.user_id,
+                RecordTypes.id == DailyGroupRecords.type_record_id,
+            ))
+            .where(and_(
+                user_group_association.c.group_id == group.id,
+                or_(
+                    DailyGroupRecords.count < RecordTypes.required,
+                    DailyGroupRecords.count.is_(None)
+                )
+            ))
+        )
+        users_not_done = result.all()
+    return users_not_done
+async def reset_daily_pushups():
+    """
+    Сбрасывает дневные счетчики отжиманий и возвращает список пользователей,
+    которые не сделали отжимания сегодня.
+    """
+    async with async_session() as session:
+        # Сбрасываем все записи отжиманий
+        await session.execute(delete(DailyGroupRecords))
+        await session.commit()
