@@ -59,7 +59,7 @@ async def send_daily_report(bot: Bot):
             try:
                 await bot.send_message(chat_id=group.group_id, text=report_text, message_thread_id=group.topic_id)
             except Exception as e:
-                print(f"Не удалось отправить сообщение в группу {group.group_id}: {e}")
+                print(f"Не удалось отправить сообщение в группу {group.group_id}:  {e}")
 
             await reset_daily_pushups()
 
