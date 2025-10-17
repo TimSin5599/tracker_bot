@@ -1,4 +1,4 @@
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
@@ -7,7 +7,8 @@ from numpy.core.defchararray import upper
 from bot.database.session import async_session
 from bot.database.storage import (
     update_user_activity, save_user_consent, get_or_create_group, get_all_types_training_group, add_training_type,
-    get_user_stats, get_users_without_training_today, get_required_count, get_or_create_user, get_group_stats
+    get_user_stats, get_users_without_training_today, get_required_count, get_or_create_user, get_group_stats,
+    get_today_records, update_records
 )
 from bot.handlers.possible_states import PossibleStates
 
@@ -163,7 +164,6 @@ async def stats_group_command(message: Message):
 
         response = f"🏆 Статистика группы {message.chat.title}:\n\n"
         response += f"Участников: {len(stats.items())} 👥\n\n"
-
         for user, user_stats in stats.items():
             response += f"@{user}:\n"
             for type, type_stats in user_stats.items():
@@ -181,8 +181,8 @@ async def stats_group_command(message: Message):
 # async def change_required(message: Message, state: FSMContext):
 
 
-@router.message(Command(commands='lazy'))
-async def lazy_command(message: Message, state: FSMContext):
+@router.message(Command(commands=['lazy', 'remove']))
+async def choose_training_type(message: Message, state: FSMContext):
     """Команда /lazy - показать кто не сделал отжимания сегодня"""
     if message.chat.type not in ['group', 'supergroup']:
         await message.answer("❌ Эта команда работает только в группах!")
@@ -205,7 +205,9 @@ async def lazy_command(message: Message, state: FSMContext):
     keyboard = []
     for type in all_types_training_group:
         keyboard.append([InlineKeyboardButton(text=type, callback_data='type_' + type)])
-    keyboard.append([InlineKeyboardButton(text='Все', callback_data='type_all')])
+
+    if message.text.lower() == 'lazy':
+        keyboard.append([InlineKeyboardButton(text='Все', callback_data='type_all')])
 
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -216,6 +218,39 @@ async def lazy_command(message: Message, state: FSMContext):
 
     await state.clear()
     await state.set_state(PossibleStates.choose_training_type)
+    await state.set_data({
+        'command': str(message.text)
+    })
+
+@router.callback_query(PossibleStates.choose_training_type)
+async def callback_choose_training_type(callback: CallbackQuery, state: FSMContext):
+    callback_data = callback.data.split('_')[1]
+    command = str(await state.get_value('command'))
+
+    if callback_data == '':
+        return
+
+    if command == '/lazy':
+        await callback.edit_message_text('Метод находится в разработке...')
+    elif command == '/remove':
+        keyboard = [
+            [InlineKeyboardButton(text="10", callback_data="count_10"),
+             InlineKeyboardButton(text="15", callback_data="count_15")],
+            [InlineKeyboardButton(text="20", callback_data="count_20"),
+             InlineKeyboardButton(text="30", callback_data="count_30"),
+             InlineKeyboardButton(text="Другое число", callback_data="count_custom")],
+            [InlineKeyboardButton(text="⏭️ Пропустить", callback_data="count_0")]
+        ]
+
+        await state.clear()
+        await state.set_state(PossibleStates.awaiting_remove)
+        await state.set_data({
+            'record_type': callback_data
+        })
+        await callback.message.edit_text(text=f'Тип: {callback_data.upper()}\nВыберете количество, которое хотите удалить:',reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    else:
+        await state.clear()
+        return
 
 @router.message(Command(commands='types'))
 async def types_command(message: Message, state: FSMContext):
@@ -239,98 +274,27 @@ async def types_command(message: Message, state: FSMContext):
         result += f" • {type}\n"
     await message.answer(result)
 
-# @router.message(Command(commands='remove'))
-# async def remove_command(message: Message):
-#     """Команда /remove - удаляет выбранное количество отжиманий"""
-#
-#     group_id = str(message.chat.id)
-#     topic_id = message.message_thread_id
-#
-#     group = await get_or_create_group(group_id=group_id, topic_id=topic_id)
-#
-#     try:
-#         count_users_pushups = await get_today_pushups(user_id=message.from_user.id, group_id=group.group_id)
-#
-#         if not count_users_pushups:
-#             await message.answer("❌ Отсутствуют данные отжиманий за сегодня")
-#     except Exception as e:
-#         await message.answer("❌ Ошибка при получении данных")
-#
-#     inline_keyboard = [
-#         [InlineKeyboardButton(text="10 отжиманий", callback_data="remove_10"),
-#          InlineKeyboardButton(text="15 отжиманий", callback_data="remove_15")],
-#         [InlineKeyboardButton(text="20 отжиманий", callback_data="remove_20"),
-#          InlineKeyboardButton(text="30 отжиманий", callback_data="remove_30"),
-#          InlineKeyboardButton(text="Другое число", callback_data="remove_custom")],
-#         [InlineKeyboardButton(text="⏭️ Пропустить", callback_data="remove_0")]
-#     ]
-#
-#     reply_markup = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
-#
-#     await message.answer(
-#         "💪 Сколько отжиманий вы хотите удалить за сегодня?\n\n"
-#         "• Выберите стандартное количество\n"
-#         "• Или введите своё число\n"
-#         "• ⏭️ Пропустить",
-#         reply_markup=reply_markup
-#     )
-#
-# @router.callback_query(F.data.startswith("remove_"))
-# async def handle_remove_count_callback(callback: CallbackQuery, state: FSMContext, bot: Bot):
-#     state_user_id = await state.get_value('user_id')
-#     if state_user_id is None:
-#         return
-#
-#     if state_user_id != callback.from_user.id:
-#         await bot.send_message(
-#             chat_id=callback.message.chat.id,
-#             message_thread_id=callback.message.message_thread_id,
-#             text=f'''Пользователь @{callback.from_user.username}, вы не можете выбирать количество отжиманий за других'''
-#         )
-#         return
-#
-#     await callback.message.answer()
-#
-#     user_id = callback.from_user.id
-#     group_id = callback.message.chat.id if callback.message else None
-#     count_str = callback.data.split('_')[1]
-#
-#     if count_str == 'custom':
-#         # Для кнопки "Другое число" запрашиваем точное число
-#         print("🔔 Запрошен ввод своего числа")
-#
-#         keyboard = [
-#             [InlineKeyboardButton(text="Отмена", callback_data="remove_cancel")]
-#         ]
-#         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-#
-#         # ОЧИЩАЕМ предыдущие состояния и устанавливаем новое
-#         await state.clear()  # Очищаем все предыдущие состояния
-#         await state.set_data({
-#             'awaiting_remove_count': True,
-#             'user_id': user_id,
-#             'bot_msg_id': callback.message.message_id,
-#         })
-#
-#         print(f"🔔 Установлены состояния: {await state.get_data()}")
-#
-#         await callback.message.edit_text(
-#             "🔢 Введите точное количество отжиманий:\n\n"
-#             "Отправьте число сообщением\n"
-#             "Примеры: 15, 30, 42\n\n",
-#             reply_markup=reply_markup
-#         )
-#         return
-#
-#     elif count_str == '0' or count_str == 'cancel':
-#         # Для кнопки "Пропустить" - просто удаляем сообщение
-#         print("🔔 Пропуск подхода - удаляем сообщение")
-#         await callback.message.delete()
-#         await state.clear()
-#         return
-#
-#     else:
-#         # Для числовых кнопок обрабатываем как обычно
-#         count = int(count_str)
-#         print(f"🔔 Обрабатываем {count} отжиманий")
-#         await process_pushup_count(bot, callback.message.message_id, group_id, callback.message.message_thread_id, user_id, count)
+@router.callback_query(PossibleStates.awaiting_remove)
+async def handle_remove_count_callback(callback: CallbackQuery, state: FSMContext):
+    print('handle_remove_count_callback')
+    callback_data = callback.data.split('_')[1]
+    record_type = await state.get_value('record_type')
+    print(isinstance(callback_data, int), record_type)
+    if callback_data == '':
+        await state.clear()
+        return
+    elif callback_data == 'custom':
+        print()
+    else:
+        callback_data = int(callback_data)
+
+        if callback_data == 0:
+            await state.clear()
+            await callback.message.delete()
+            return
+
+        await update_records(user=callback.message.from_user,
+                             group=callback.message.chat,
+                             count=-callback_data,
+                             record_type=record_type)
+        await state.clear()

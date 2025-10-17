@@ -118,6 +118,7 @@ async def add_pushups(user_id: int,
                 .values(count=daily_count, date=datetime.now())
             )
         else:
+            daily_count = count
             group_record = DailyGroupRecords(
                 user_id=user_id,
                 group_id=group_id,
@@ -174,7 +175,7 @@ async def add_pushups(user_id: int,
 
         await session.commit()
 
-        return summary_record, count
+        return daily_count, count
 
 
 async def get_id_group_training_type(group_id: str, training_type: str):
@@ -211,27 +212,26 @@ async def add_training_type(group_id: str, training_type: str, required_count: i
 
 async def get_group_stats(group_id: str, training_type: str = None):
     """Получение статистики по тренировкам в группе"""
-    async with async_session() as session:
-        group = await get_or_create_group(group_id)
-        users = await get_users_from_group(group_id)
+    group = await get_or_create_group(group_id)
+    users = await get_users_from_group(group_id)
+    group_stats = {}
 
-        if training_type:
-            # training_type_id = await get_id_group_training_type(group_id, training_type)
-            # TO DO:
-            print()
-        else:
-            try:
-                group_stats = {}
-                for user in users:
-                    user_stats = await get_user_stats(user.user_id, group.group_id)
-                    total_size_trainings = 0
-                    for type, stats in user_stats.items():
-                            total_size_trainings += int(stats['today'])
-                    user_stats['total_size_trainings'] = total_size_trainings
-                    group_stats[user.username] = user_stats
-            except Exception as e:
-                print(e)
-        return dict(sorted(group_stats.items(), key=lambda x: x[1]['total_size_trainings'], reverse=True))
+    if training_type:
+        # training_type_id = await get_id_group_training_type(group_id, training_type)
+        # TO DO:
+        print()
+    else:
+        try:
+            for user in users:
+                user_stats = await get_user_stats(user.user_id, group.group_id)
+                total_size_trainings = 0
+                for type, stats in user_stats.items():
+                    total_size_trainings += int(stats['today'])
+                user_stats['total_size_trainings'] = total_size_trainings
+                group_stats[user.username] = user_stats
+        except Exception as e:
+            print(e)
+    return dict(sorted(group_stats.items(), key=lambda x: x[1]['total_size_trainings'], reverse=True))
 
 # Получение статистики пользователя из определенной группы
 async def get_user_group_training_type_stats(user_id: int, group_id: str, training_type: str):
@@ -293,17 +293,16 @@ async def get_total_records(user_id: int, type_record_id: int):
 
 
 async def get_user_stats(user_id: int, group_id: str):
-    async with async_session() as session:
-        await get_or_create_user(user_id, "", "")
+    await get_or_create_user(user_id, "", "")
 
-        # Результат за сегодня
-        all_types = await get_all_types_training_group(group_id)
-        result = {}
-        for type in all_types:
-            result[type] = await get_user_group_training_type_stats(user_id=user_id,
-                                                      group_id=group_id,
-                                                      training_type=type)
-        return result
+    # Результат за сегодня
+    all_types = await get_all_types_training_group(group_id)
+    result = {}
+    for type in all_types:
+        result[type] = await get_user_group_training_type_stats(user_id=user_id,
+                                                  group_id=group_id,
+                                                  training_type=type)
+    return result
 
 
 async def get_users_without_training_today(group: Group, training_type: str):
@@ -386,14 +385,15 @@ async def get_users_without_pushups_today(group):
                 DailyGroupRecords.count
             )
             .select_from(User)
-            .join(user_group_association, User.id == user_group_association.c.user_id)
+            .join(user_group_association, and_(User.id == user_group_association.c.user_id,
+                                               user_group_association.c.group_id == group.id))
             .join(RecordTypes, RecordTypes.group_id == group.group_id)
             .outerjoin(DailyGroupRecords, and_(
                 User.user_id == DailyGroupRecords.user_id,
+                DailyGroupRecords.group_id == group.group_id,
                 RecordTypes.id == DailyGroupRecords.type_record_id,
             ))
             .where(and_(
-                user_group_association.c.group_id == group.id,
                 or_(
                     DailyGroupRecords.count < RecordTypes.required,
                     DailyGroupRecords.count.is_(None)
@@ -402,12 +402,29 @@ async def get_users_without_pushups_today(group):
         )
         users_not_done = result.all()
     return users_not_done
-async def reset_daily_pushups():
+async def reset_daily_pushups(group: Group):
     """
     Сбрасывает дневные счетчики отжиманий и возвращает список пользователей,
     которые не сделали отжимания сегодня.
     """
     async with async_session() as session:
         # Сбрасываем все записи отжиманий
-        await session.execute(delete(DailyGroupRecords))
+        await session.execute(delete(DailyGroupRecords).where(DailyGroupRecords.group_id == group.group_id))
+        await session.commit()
+
+async def update_records(user, group, record_type: str, count: int):
+    async with async_session() as session:
+        result = await session.execute(
+            select(RecordTypes.id)
+            .where(RecordTypes.record_type == record_type,
+                   RecordTypes.group_id == group.id)
+        )
+        type_record_id = result.scalar_one_or_none()
+        await session.execute(
+            update(DailyGroupRecords)
+            .where(DailyGroupRecords.type_record_id == type_record_id,
+                   DailyGroupRecords.group_id == group.id,
+                   DailyGroupRecords.user_id == user.id)
+            .values(count=DailyGroupRecords.count+count)
+        )
         await session.commit()
