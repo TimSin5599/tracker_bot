@@ -27,10 +27,11 @@ class TopicMiddlewares(BaseMiddleware):
             )
             group = result.scalar_one_or_none()
 
-        if group is None:
+        if group is None or (group.topic_id is None and topic_id is None):
             return await handler(event, data)
 
-        if group.topic_id is not None and int(group.topic_id) != int(topic_id):
+        if (group.topic_id is not None and topic_id is None) or (group.topic_id is None and topic_id is not None):
             return
 
-        return await handler(event, data)
+        if int(topic_id) == int(group.topic_id):
+            return await handler(event, data)

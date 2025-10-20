@@ -23,7 +23,13 @@ async def handle_select_trainig_type(message: Message, state: FSMContext):
         print("❌ Нет данных: update.message или from_user отсутствует")
         return
 
-    group = await get_or_create_group(group_id=str(message.chat.id), group_name=message.chat.title, topic_id=message.message_thread_id)
+    user = await get_or_create_user(user_id=message.from_user.id,
+                                    username=message.from_user.username,
+                                    first_name=message.from_user.first_name,
+                                    last_name=message.from_user.last_name)
+    group = await get_or_create_group(group_id=str(message.chat.id),
+                                      group_name=message.chat.title,
+                                      topic_id=message.message_thread_id)
     group_id = group.group_id
     topic_id = message.message_thread_id if message else None
 
@@ -100,7 +106,7 @@ async def handle_awaiting_type_training(callback: CallbackQuery, state: FSMConte
     await state.set_data({
         'training_type': type_training,
         'last_video_note': callback.message.video_note,
-        'user_id': callback.from_user.id
+        'user_id': callback.message.from_user.id
     })
 
     await state.set_state(PossibleStates.awaiting_count)
@@ -114,9 +120,10 @@ async def handle_count_callback(callback: CallbackQuery, state: FSMContext, bot:
     training_type = await state.get_value('training_type')
 
     if state_user_id is None:
+        await state.clear()
         return
 
-    if state_user_id != callback.from_user.id:
+    if state_user_id != callback.message.from_user.id:
         await bot.send_message(
             chat_id=callback.message.chat.id,
             message_thread_id=callback.message.message_thread_id,
@@ -178,6 +185,9 @@ async def handle_count_callback(callback: CallbackQuery, state: FSMContext, bot:
                                    count=count,
                                    training_type=training_type)
 
+        await state.clear()
+        print("✅ Состояние очищено")
+
 @router.message(PossibleStates.awaiting_count)
 async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot):
     """Обработка текстового ввода количества отжиманий"""
@@ -187,6 +197,7 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
     training_type = await state.get_value('training_type')
 
     if state_user_id is None or training_type is None:
+        await state.clear()
         return
 
     if state_user_id != message.from_user.id:
