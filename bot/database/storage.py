@@ -174,7 +174,7 @@ async def add_pushups(user_id: int,
 
         await session.commit()
 
-        return summary_record, count
+        return summary_record, daily_count, count
 
 
 async def get_id_group_training_type(group_id: str, training_type: str):

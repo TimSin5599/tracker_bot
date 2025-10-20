@@ -265,7 +265,7 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
 
 async def process_pushup_count(bot: Bot, bot_message_id, group_id: str, topic_id, user_id, count, training_type):
     """Обработка введенного количества отжиманий"""
-    today_total, actual_count = await add_pushups(user_id=user_id, group_id=group_id, type_record=training_type, count=count, topic_id=topic_id)
+    summary_record, today_total, actual_count = await add_pushups(user_id=user_id, group_id=group_id, type_record=training_type, count=count, topic_id=topic_id)
     user = await get_or_create_user(user_id=user_id)
 
     if count <= 15:
@@ -290,6 +290,7 @@ async def process_pushup_count(bot: Bot, bot_message_id, group_id: str, topic_id
         f"{emoji} {level}\n"
         f"✅ Засчитано: {actual_count}!\n"
         f"📊 Сегодня: {today_total}\n"
+        f"📊 Всего: {summary_record}\n"
         f"🎯 Отличная работа! Продолжайте в том же духе!"
     )
 

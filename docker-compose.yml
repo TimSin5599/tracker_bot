@@ -1,23 +1,105 @@
 version: '3.8'
 
 services:
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:15-alpine
+    container_name: tracker-bot-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-tracker_bot}
+      POSTGRES_USER: ${DB_USER:-tracker_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-tracker_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    networks:
+      - bot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tracker_user} -d ${DB_NAME:-tracker_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis для кэширования и очередей задач
+  redis:
+    image: redis:7-alpine
+    container_name: tracker-bot-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_password}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - bot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Telegram бот
   telegram-bot:
     build: .
     container_name: tracker-bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
-      - .:/app
       - ./data:/app/data
       - ./logs:/app/logs
-    working_dir: /app
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
       - BOT_ENV=production
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-tracker_bot}
+      - DB_USER=${DB_USER:-tracker_user}
+      - DB_PASSWORD=${DB_PASSWORD:-tracker_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis_password}
     env_file:
       - .env
     restart: unless-stopped
     networks:
       - bot-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import asyncio; from bot.database.session import engine; asyncio.run(engine.connect())"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+#  # Nginx для проксирования (опционально)
+#  nginx:
+#    image: nginx:alpine
+#    container_name: tracker-bot-nginx
+#    ports:
+#      - "80:80"
+#      - "443:443"
+#    volumes:
+#      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+#      - ./ssl:/etc/nginx/ssl:ro
+#    depends_on:
+#      - telegram-bot
+#    networks:
+#      - bot-network
+#    restart: unless-stopped
+#    profiles:
+#      - production
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
 
 networks:
   bot-network:
