@@ -297,7 +297,7 @@ async def get_total_records(user_id: int, type_record_id: int):
 
 async def get_user_stats(tg_user: TG_USER, tg_group: Chat):
     async with async_session() as session:
-        await get_or_create_user(tg_user.user_id, tg_user.username, tg_user.first_name, tg_user.last_name)
+        await get_or_create_user(tg_user.id, tg_user.username, tg_user.first_name, tg_user.last_name)
 
         # Результат за сегодня
         all_types = await get_all_types_training_group(tg_group.group_id)
