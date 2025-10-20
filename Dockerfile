@@ -33,4 +33,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import asyncio; from bot.database.session import engine; asyncio.run(engine.connect())" || exit 1
 
 # Команда запуска
-CMD ["python", "-m", "bot.main"]
+CMD ["python", "-m", "main"]
