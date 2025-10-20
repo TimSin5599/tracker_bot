@@ -212,11 +212,11 @@ async def add_training_type(group_id: str, training_type: str, required_count: i
         await session.commit()
 
 
-async def get_group_stats(group_id: str, training_type: str = None):
+async def get_group_stats(tg_group: Chat, training_type: str = None):
     """Получение статистики по тренировкам в группе"""
     async with async_session() as session:
-        group = await get_or_create_group(group_id)
-        users = await get_users_from_group(group_id)
+        group = await get_or_create_group(str(tg_group.id))
+        users = await get_users_from_group(str(tg_group.id))
 
         if training_type:
             # training_type_id = await get_id_group_training_type(group_id, training_type)
@@ -226,7 +226,8 @@ async def get_group_stats(group_id: str, training_type: str = None):
             try:
                 group_stats = {}
                 for user in users:
-                    user_stats = await get_user_stats(user.user_id, group.group_id)
+                    user_stats = await get_user_stats(tg_user_id=user.user_id,
+                                                      tg_group=tg_group)
                     total_size_trainings = 0
                     for type, stats in user_stats.items():
                             total_size_trainings += int(stats['today'])
@@ -295,15 +296,16 @@ async def get_total_records(user_id: int, type_record_id: int):
         return count
 
 
-async def get_user_stats(tg_user: TG_USER, tg_group: Chat):
+async def get_user_stats(tg_user_id: int,
+                         tg_group: Chat):
     async with async_session() as session:
-        await get_or_create_user(tg_user.id, tg_user.username, tg_user.first_name, tg_user.last_name)
+        await get_or_create_user(user_id=tg_user_id)
 
         # Результат за сегодня
-        all_types = await get_all_types_training_group(tg_group.group_id)
+        all_types = await get_all_types_training_group(str(tg_group.id))
         result = {}
         for type in all_types:
-            result[type] = await get_user_group_training_type_stats(user_id=tg_user.id,
+            result[type] = await get_user_group_training_type_stats(user_id=tg_user_id,
                                                       group_id=str(tg_group.id),
                                                       training_type=type)
         return result

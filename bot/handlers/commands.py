@@ -145,18 +145,19 @@ async def stats_group_command(message: Message):
         await message.answer("❌ Эта команда работает только в группах!")
         return
 
-    await get_or_create_user(user_id=message.from_user.id,
-                             username=message.from_user.username,
-                             first_name=message.from_user.first_name,
-                             last_name=message.from_user.last_name, )
-    await get_or_create_group(group_id=str(message.chat.id),
-                              group_name=message.chat.title,
+    tg_user = message.from_user if message.from_user else None
+    tg_group = message.chat if message.chat else None
+
+    await get_or_create_user(user_id=tg_user.id,
+                             username=tg_user.username,
+                             first_name=tg_user.first_name,
+                             last_name=tg_user.last_name, )
+    await get_or_create_group(group_id=str(tg_group.id),
+                              group_name=tg_group.title,
                               topic_id=message.message_thread_id)
 
-    chat_id = str(message.chat.id)
-
     try:
-        stats = await get_group_stats(chat_id)
+        stats = await get_group_stats(tg_group=tg_group)
 
         if not stats:
             await message.answer("📊 В группе пока нет данных об отжиманиях")
