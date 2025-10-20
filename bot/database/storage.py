@@ -1,4 +1,6 @@
 from datetime import datetime, date
+
+from aiogram.types import Message, User as TG_USER, Chat
 from sqlalchemy import select, func, and_, delete, or_, update
 from sqlalchemy.orm import selectinload, aliased
 from bot.database.models import Base, User, Group, user_group_association, DailyGroupRecords, GroupsRecords, \
@@ -292,16 +294,16 @@ async def get_total_records(user_id: int, type_record_id: int):
         return count
 
 
-async def get_user_stats(user_id: int, group_id: str):
+async def get_user_stats(tg_user: TG_USER, tg_group: Chat):
     async with async_session() as session:
-        await get_or_create_user(user_id, "", "")
+        await get_or_create_user(tg_user.user_id, tg_user.username, tg_user.first_name, tg_user.last_name)
 
         # Результат за сегодня
-        all_types = await get_all_types_training_group(group_id)
+        all_types = await get_all_types_training_group(tg_group.group_id)
         result = {}
         for type in all_types:
-            result[type] = await get_user_group_training_type_stats(user_id=user_id,
-                                                      group_id=group_id,
+            result[type] = await get_user_group_training_type_stats(user_id=tg_user.id,
+                                                      group_id=str(tg_group.id),
                                                       training_type=type)
         return result
 
@@ -376,29 +378,31 @@ async def save_user_consent(user_id: int, username: str, first_name: str):
         await session.commit()
         return "✅ Согласие сохранено."
 
-# async def reset_daily_pushups():
-#     """
-#     Сбрасывает дневные счетчики отжиманий и возвращает список пользователей,
-#     которые не сделали отжимания сегодня.
-#     """
-#     async with async_session() as session:
-#         # Получаем всех пользователей
-#         result = await session.execute(select(User.id, User.username, User.first_name, User.pushups_today))
-#         all_users = result.all()
-#
-#         # Пользователи, которые не сделали отжимания
-#         users_not_done = [
-#             {"user_id": user.id, "username": user.username, "first_name": user.first_name, "pushups_today": user.pushups_today}
-#             for user in all_users
-#             if int(user.pushups_today) < int(settings.REQUIRED_PUSHUPS)
-#         ]
-#
-#         await session.execute(
-#             update(User).values(pushups_today=0)
-#         )
-#
-#         # Сбрасываем все записи отжиманий
-#         await session.execute(delete(DailyPushup))
-#         await session.commit()
-#
-#     return users_not_done
+async def reset_daily_pushups(group_id: str):
+    """
+    Сбрасывает дневные счетчики отжиманий и возвращает список пользователей,
+    которые не сделали отжимания сегодня.
+    """
+    async with async_session() as session:
+        # Получаем всех пользователей
+        result = await session.execute(select(User.id, User.username, User.first_name, User.pushups_today))
+        all_users = result.all()
+
+        # Пользователи, которые не сделали отжимания
+        users_not_done = [
+            {"user_id": user.id, "username": user.username, "first_name": user.first_name, "pushups_today": user.pushups_today}
+            for user in all_users
+            if int(user.pushups_today) < int(settings.REQUIRED_PUSHUPS)
+        ]
+
+        await session.execute(
+            update(User).values(pushups_today=0)
+        )
+
+        # Сбрасываем все записи отжиманий
+        await session.execute(
+            delete(DailyGroupRecords)
+            .where(DailyGroupRecords.group_id == group_id))
+        await session.commit()
+
+    return users_not_done

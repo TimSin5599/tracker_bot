@@ -8,7 +8,7 @@ from bot.database.session import async_session
 from bot.database.storage import (
     update_user_activity, save_user_consent, get_or_create_group, get_all_types_training_group, add_training_type,
     get_user_stats, get_users_without_training_today, get_required_count, get_or_create_user, get_group_stats,
-    get_today_records, update_records
+    get_today_records
 )
 from bot.handlers.possible_states import PossibleStates
 
@@ -123,8 +123,8 @@ async def stats_command(message: Message):
                               group_name=message.chat.title,
                               topic_id=message.message_thread_id)
 
-    user_id = message.from_user.id if message.from_user else None
-    pushup_stats = await get_user_stats(user_id=user_id, group_id=str(message.chat.id))
+    tg_user = message.from_user if message.from_user else None
+    pushup_stats = await get_user_stats(tg_user=tg_user, tg_group=message.chat)
 
     if not pushup_stats:
         await message.answer("📊 Нет данных для отображения")
@@ -274,27 +274,27 @@ async def types_command(message: Message, state: FSMContext):
         result += f" • {type}\n"
     await message.answer(result)
 
-@router.callback_query(PossibleStates.awaiting_remove)
-async def handle_remove_count_callback(callback: CallbackQuery, state: FSMContext):
-    print('handle_remove_count_callback')
-    callback_data = callback.data.split('_')[1]
-    record_type = await state.get_value('record_type')
-    print(isinstance(callback_data, int), record_type)
-    if callback_data == '':
-        await state.clear()
-        return
-    elif callback_data == 'custom':
-        print()
-    else:
-        callback_data = int(callback_data)
-
-        if callback_data == 0:
-            await state.clear()
-            await callback.message.delete()
-            return
-
-        await update_records(user=callback.message.from_user,
-                             group=callback.message.chat,
-                             count=-callback_data,
-                             record_type=record_type)
-        await state.clear()
+# @router.callback_query(PossibleStates.awaiting_remove)
+# async def handle_remove_count_callback(callback: CallbackQuery, state: FSMContext):
+#     print('handle_remove_count_callback')
+#     callback_data = callback.data.split('_')[1]
+#     record_type = await state.get_value('record_type')
+#     print(isinstance(callback_data, int), record_type)
+#     if callback_data == '':
+#         await state.clear()
+#         return
+#     elif callback_data == 'custom':
+#         print()
+#     else:
+#         callback_data = int(callback_data)
+#
+#         if callback_data == 0:
+#             await state.clear()
+#             await callback.message.delete()
+#             return
+#
+#         await update_records(user=callback.message.from_user,
+#                              group=callback.message.chat,
+#                              count=-callback_data,
+#                              record_type=record_type)
+#         await state.clear()
