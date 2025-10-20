@@ -124,7 +124,7 @@ async def stats_command(message: Message):
                               topic_id=message.message_thread_id)
 
     tg_user = message.from_user if message.from_user else None
-    pushup_stats = await get_user_stats(tg_user=tg_user, tg_group=message.chat)
+    pushup_stats = await get_user_stats(tg_user_id=tg_user.id, tg_group=message.chat)
 
     if not pushup_stats:
         await message.answer("📊 Нет данных для отображения")
