@@ -297,12 +297,12 @@ async def process_pushup_count(bot: Bot, bot_message_id, group_id: str, topic_id
         chat_id=group_id,
         message_id=bot_message_id,
         text=
-        f" {training_type} пользователя @{user.username}\n\n"
-        f"{emoji} {level}\n"
-        f"✅ Засчитано: {actual_count}!\n"
-        f"📊 Сегодня: {today_total}\n"
-        f"📊 Всего: {summary_record}\n"
-        f"🎯 Отличная работа! Продолжайте в том же духе!"
+            f"{training_type} пользователя @{user.username}\n\n"
+            f"{emoji} {level}\n"
+            f"✔️ Засчитано: {actual_count}!\n"
+            f"📅 Сегодня: {today_total}\n"
+            f"📈 За всё время: {summary_record}\n"
+            f"⭐ Отличная работа! Продолжайте в том же духе! 🎯"
     )
 
 @router.message(Command(commands='/cancel'))
