@@ -120,6 +120,7 @@ async def add_pushups(user_id: int,
                 .values(count=daily_count, date=datetime.now())
             )
         else:
+            daily_count = count
             group_record = DailyGroupRecords(
                 user_id=user_id,
                 group_id=group_id,
