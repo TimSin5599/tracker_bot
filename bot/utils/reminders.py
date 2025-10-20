@@ -79,7 +79,7 @@ def setup_reminders(bot: Bot):
     scheduler = AsyncIOScheduler(timezone=MOSCOW_TZ)
 
     scheduler.add_job(send_reminders,
-                      trigger=CronTrigger(hour=21, minute=0),
+                      trigger=CronTrigger(hour=21, minute=00),
                       args=[bot],
                       id='daily_reminders',
                       replace_existing=True)
