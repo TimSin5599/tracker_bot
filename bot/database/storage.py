@@ -311,37 +311,32 @@ async def get_user_stats(tg_user_id: int,
         return result
 
 
-async def get_users_without_training_today(group: Group, training_type: str):
-    async with (async_session() as session):
-        training_type_id = await get_id_group_training_type(group.group_id, training_type)
-        required_count = await get_required_count(group_id=group.group_id, training_type=training_type)
-        print(f'Required count: {required_count}, training_type_id: {training_type_id}')
-
-        subquery = (
-            select(DailyGroupRecords.user_id,
-                   func.coalesce(func.sum(DailyGroupRecords.count), 0).label("count")
-                   )
-            .where(
-                DailyGroupRecords.type_record_id == training_type_id,
-            )
-            .group_by(DailyGroupRecords.user_id)
-            .subquery()
-        )
-
-        daily_sum = aliased(subquery)
-
+async def get_users_without_training_today(group: Group):
+    async with async_session() as session:
         result = await session.execute(
-            select(User)
-            .join(user_group_association, User.id == user_group_association.c.user_id)
-            .where(user_group_association.c.group_id == group.id)
-            .outerjoin(daily_sum, User.id == daily_sum.c.user_id)
-            .where(
-                or_(DailyGroupRecords.count is None,
-                    DailyGroupRecords.count < int(required_count))
+            select(
+                User.username,
+                RecordTypes.record_type,
+                RecordTypes.required,
+                DailyGroupRecords.count
             )
+            .select_from(User)
+            .join(user_group_association, User.id == user_group_association.c.user_id)
+            .join(RecordTypes, RecordTypes.group_id == group.group_id)
+            .outerjoin(DailyGroupRecords, and_(
+                User.user_id == DailyGroupRecords.user_id,
+                RecordTypes.id == DailyGroupRecords.type_record_id,
+            ))
+            .where(and_(
+                user_group_association.c.group_id == group.id,
+                or_(
+                    DailyGroupRecords.count < RecordTypes.required,
+                    DailyGroupRecords.count.is_(None)
+                )
+            ))
         )
-        users = result.scalars().all()
-        return users
+        users_not_done = result.all()
+    return users_not_done
 
 
 async def update_user_activity(
@@ -381,31 +376,13 @@ async def save_user_consent(user_id: int, username: str, first_name: str):
         await session.commit()
         return "✅ Согласие сохранено."
 
-async def reset_daily_pushups(group_id: str):
+async def reset_daily_pushups(group: Group):
     """
     Сбрасывает дневные счетчики отжиманий и возвращает список пользователей,
     которые не сделали отжимания сегодня.
     """
     async with async_session() as session:
-        # Получаем всех пользователей
-        result = await session.execute(select(User.id, User.username, User.first_name, User.pushups_today))
-        all_users = result.all()
-
-        # Пользователи, которые не сделали отжимания
-        users_not_done = [
-            {"user_id": user.id, "username": user.username, "first_name": user.first_name, "pushups_today": user.pushups_today}
-            for user in all_users
-            if int(user.pushups_today) < int(settings.REQUIRED_PUSHUPS)
-        ]
-
-        await session.execute(
-            update(User).values(pushups_today=0)
-        )
-
-        # Сбрасываем все записи отжиманий
         await session.execute(
             delete(DailyGroupRecords)
-            .where(DailyGroupRecords.group_id == group_id))
+            .where(DailyGroupRecords.group_id == group.group_id))
         await session.commit()
-
-    return users_not_done
