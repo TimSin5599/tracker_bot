@@ -58,7 +58,7 @@ async def send_daily_report(bot: Bot):
             training_types = await get_all_types_training_group(group.group_id)
 
             for training_type in training_types:
-                users_not_done = await get_users_without_training_today(group=group)
+                users_not_done = await get_users_without_training_today(group=group, training_type=training_type)
 
                 if users_not_done or len(users_not_done) > 0:
                     print(f'{users_not_done} {group.id} {group.group_id}')
