@@ -376,7 +376,7 @@ async def save_user_consent(user_id: int, username: str, first_name: str):
         await session.commit()
         return "✅ Согласие сохранено."
 
-async def reset_daily_pushups(group: Group):
+async def reset_daily_trainings(group: Group):
     """
     Сбрасывает дневные счетчики отжиманий и возвращает список пользователей,
     которые не сделали отжимания сегодня.

@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from bot.database.models import Group
 from bot.database.session import async_session
-from bot.database.storage import get_users_without_training_today, reset_daily_pushups, get_all_types_training_group
+from bot.database.storage import get_users_without_training_today, reset_daily_trainings, get_all_types_training_group
 
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
@@ -66,7 +66,7 @@ async def send_daily_report(bot: Bot):
                 except Exception as e:
                     print(f"Не удалось отправить сообщение в группу {group.group_id}:  {e}")
 
-            await reset_daily_pushups(group.group_id)
+            await reset_daily_trainings(group)
 
 
 def setup_reminders(bot: Bot):
