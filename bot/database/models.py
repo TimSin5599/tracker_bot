@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, ForeignKey, Table
+from sqlalchemy import BigInteger, Column, Integer, String, Date, ForeignKey, Table
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
@@ -17,7 +17,7 @@ class User(Base):
     __tablename__ = 'users'
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, unique=True, nullable=False)  # Telegram user ID
+    tg_user_id = Column(BigInteger, unique=True, nullable=False)  # Telegram user ID
     username = Column(String(255))
     first_name = Column(String(255))
     last_name = Column(String(255))
@@ -29,7 +29,7 @@ class Group(Base):
     __tablename__ = 'groups'
 
     id = Column(Integer, primary_key=True)
-    group_id = Column(String(255), unique=True, nullable=False)  # Telegram group ID (отрицательное число)
+    tg_group_id = Column(BigInteger, unique=True, nullable=False)  # Telegram group ID (отрицательное число)
     group_name = Column(String(255))
     topic_id = Column(Integer, nullable=True)
     created_at = Column(Date, default=datetime.now)
@@ -42,7 +42,7 @@ class RecordTypes(Base):
     __tablename__ = 'record_types'
 
     id = Column(Integer, primary_key=True)
-    group_id = Column(String(255), ForeignKey('groups.group_id'))
+    tg_group_id = Column(BigInteger, ForeignKey('groups.tg_group_id'))
     record_type = Column(String(255))
     required = Column(Integer, nullable=False)
 
@@ -53,8 +53,8 @@ class DailyGroupRecords(Base):
     __tablename__ = 'daily_group_records'
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.user_id'))
-    group_id = Column(String(255), ForeignKey('groups.group_id'))
+    tg_user_id = Column(BigInteger, ForeignKey('users.tg_user_id'))
+    tg_group_id = Column(BigInteger, ForeignKey('groups.tg_group_id'))
     type_record_id = Column(Integer, ForeignKey('record_types.id'))
     count = Column(Integer, nullable=False)
     date = Column(Date, default=datetime.now)
@@ -68,7 +68,7 @@ class GroupsRecords(Base):
     __tablename__ = 'groups_records'
 
     id = Column(Integer, primary_key=True)
-    group_id = Column(String(255), ForeignKey('groups.group_id'))
+    tg_group_id = Column(BigInteger, ForeignKey('groups.tg_group_id'))
     type_record_id = Column(Integer, ForeignKey('record_types.id'))
     summary_count = Column(Integer, nullable=False)
 
@@ -80,7 +80,7 @@ class UsersRecords(Base):
     __tablename__ = 'users_records'
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey('users.user_id'))
+    tg_user_id = Column(BigInteger, ForeignKey('users.tg_user_id'))
     type_record_id = Column(Integer, ForeignKey('record_types.id'))
     summary_count = Column(Integer, nullable=False)
 

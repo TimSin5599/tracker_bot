@@ -6,9 +6,8 @@ from numpy.core.defchararray import upper
 
 from bot.database.session import async_session
 from bot.database.storage import (
-    update_user_activity, save_user_consent, get_or_create_group, get_all_types_training_group, add_training_type,
-    get_user_stats, get_users_without_training_today, get_required_count, get_or_create_user, get_group_stats,
-    get_today_records
+    check_group_params, check_user_params, update_user_activity, save_user_consent, get_or_create_group, get_all_types_training_group, add_training_type,
+    get_user_stats, get_or_create_user, get_group_stats
 )
 from bot.handlers.possible_states import PossibleStates
 
@@ -17,23 +16,19 @@ router = Router()
 @router.message(CommandStart())
 async def start_command(message: Message):
     """Обработчик команды /start"""
-
-    user = message.from_user
-    chat = message.chat
-    topic_id = message.message_thread_id if message else None
-
     async with async_session() as session:
-        await update_user_activity(
-            user_id=user.id,
-            username=user.username,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            group_id=str(chat.id) if chat.type in ['group', 'supergroup', 'private'] else None,
-            group_name=chat.title if chat.type in ['group', 'supergroup', 'private'] else None,
-            topic_id=topic_id,
-        )
+        await update_user_activity(message)
 
-    await save_user_consent(user.id, user.username, user.first_name)
+    tg_user_id, tg_username, tg_first_name, tg_last_name = check_user_params(message)
+    tg_group_id, tg_group_name, tg_topic_id = check_group_params(message)
+
+    await get_or_create_group(group_id=tg_group_id,
+                        group_name=tg_group_name,
+                        topic_id=tg_topic_id)
+    await get_or_create_user(user_id=tg_user_id,
+                       username=tg_username,
+                       first_name=tg_first_name,
+                       last_name=tg_last_name)
 
     await message.answer(
         "👋 Привет! Я бот для отслеживания отжиманий!\n\n"
@@ -67,13 +62,16 @@ async def help_command(message: Message):
 
 @router.message(Command(commands='add_type'))
 async def add_type(message: Message, state: FSMContext):
-    await get_or_create_user(user_id=message.from_user.id,
-                             username=message.from_user.username,
-                             first_name=message.from_user.first_name,
-                             last_name=message.from_user.last_name, )
-    await get_or_create_group(group_id=str(message.chat.id),
-                              group_name=message.chat.title,
-                              topic_id=message.message_thread_id)
+    tg_user_id, tg_username, tg_first_name, tg_last_name = check_user_params(message)
+    tg_group_id, tg_group_name, tg_topic_id = check_group_params(message)
+
+    await get_or_create_user(user_id=tg_user_id,
+                             username=tg_username,
+                             first_name=tg_first_name,
+                             last_name=tg_last_name)
+    await get_or_create_group(group_id=tg_group_id,
+                              group_name=tg_group_name,
+                              topic_id=tg_topic_id)
 
     await state.set_state(PossibleStates.create_training_type)
     await message.answer(
@@ -82,11 +80,15 @@ async def add_type(message: Message, state: FSMContext):
 
 @router.message(PossibleStates.create_training_type)
 async def create_training_type(message: Message, state: FSMContext):
-    new_type = message.text.strip()
-    group_id = str(message.chat.id)
-
+    if message.text is not None:
+        new_type = message.text.strip()
+    else:
+        await message.answer("❌ Некорректный ввод! Введите название типа тренировки:")
+        return
+    
+    tg_group_id, _, _ = check_group_params(message)
     # Проверяем и добавляем новый тип
-    existing_types = await get_all_types_training_group(group_id=group_id)
+    existing_types = await get_all_types_training_group(group_id=tg_group_id)
     if new_type in existing_types:
         await message.answer("❌ Этот тип уже существует! Введите другое название:")
         return
@@ -100,12 +102,15 @@ async def create_training_type(message: Message, state: FSMContext):
 @router.message(PossibleStates.choose_count)
 async def choose_count(message: Message, state: FSMContext):
     training_type = str(await state.get_value('training_type'))
-    group_id = str(message.chat.id)
-    required_count = message.text.strip()
+    tg_group_id, _, _ = check_group_params(message)
+    if message.text is not None:
+        required_count = int(message.text.strip())
+    else:
+        await message.answer("❌ Некорректный ввод! Введите необходимое количество:")
+        return
 
     try:
-        required_count = int(required_count)
-        await add_training_type(group_id=group_id, training_type=training_type, required_count=required_count)
+        await add_training_type(group_id=tg_group_id, training_type=training_type, required_count=required_count)
         await state.clear()
         await message.answer(f"✅ Тип '{training_type}' создан с количеством {required_count}!")
     except ValueError:
@@ -114,23 +119,24 @@ async def choose_count(message: Message, state: FSMContext):
 @router.message(Command(commands='stats'))
 async def stats_command(message: Message):
     """Команда /stats - полная статистика (только по отжиманиям)"""
+    tg_user_id, tg_username, tg_first_name, tg_last_name = check_user_params(message)
+    tg_group_id, tg_group_name, tg_topic_id = check_group_params(message)
 
-    await get_or_create_user(user_id=message.from_user.id,
-                             username=message.from_user.username,
-                             first_name=message.from_user.first_name,
-                             last_name=message.from_user.last_name, )
-    await get_or_create_group(group_id=str(message.chat.id),
-                              group_name=message.chat.title,
-                              topic_id=message.message_thread_id)
+    await get_or_create_user(user_id=tg_user_id,
+                             username=tg_username,
+                             first_name=tg_first_name,
+                             last_name=tg_last_name)
+    await get_or_create_group(group_id=tg_group_id,
+                              group_name=tg_group_name,
+                              topic_id=tg_topic_id)
 
-    tg_user = message.from_user if message.from_user else None
-    pushup_stats = await get_user_stats(tg_user_id=tg_user.id, tg_group=message.chat)
+    pushup_stats = await get_user_stats(message)
 
     if not pushup_stats:
         await message.answer("📊 Нет данных для отображения")
         return
 
-    response = f"📊 ПОЛНАЯ СТАТИСТИКА @{message.from_user.username}\n\n"
+    response = f"📊 ПОЛНАЯ СТАТИСТИКА @{tg_username}\n\n"
     for key, value in pushup_stats.items():
         response += f"🏆 {key}:\n"
         response += f"   📅 Сегодня: {value['today']}\n"
@@ -145,19 +151,19 @@ async def stats_group_command(message: Message):
         await message.answer("❌ Эта команда работает только в группах!")
         return
 
-    tg_user = message.from_user if message.from_user else None
-    tg_group = message.chat if message.chat else None
-
-    await get_or_create_user(user_id=tg_user.id,
-                             username=tg_user.username,
-                             first_name=tg_user.first_name,
-                             last_name=tg_user.last_name, )
-    await get_or_create_group(group_id=str(tg_group.id),
-                              group_name=tg_group.title,
-                              topic_id=message.message_thread_id)
+    tg_user_id, tg_username, tg_first_name, tg_last_name = check_user_params(message)
+    tg_group_id, tg_group_name, tg_topic_id = check_group_params(message)
+    
+    await get_or_create_user(user_id=tg_user_id,
+                             username=tg_username,
+                             first_name=tg_first_name,
+                             last_name=tg_last_name)
+    await get_or_create_group(group_id=tg_group_id,
+                              group_name=tg_group_name,
+                              topic_id=tg_topic_id)
 
     try:
-        stats = await get_group_stats(tg_group=tg_group)
+        stats = await get_group_stats(message)
 
         if not stats:
             await message.answer("📊 В группе пока нет данных об отжиманиях")
@@ -188,16 +194,19 @@ async def choose_training_type(message: Message, state: FSMContext):
     if message.chat.type not in ['group', 'supergroup']:
         await message.answer("❌ Эта команда работает только в группах!")
         return
+    
+    tg_user_id, tg_username, tg_first_name, tg_last_name = check_user_params(message)
+    tg_group_id, tg_group_name, tg_topic_id = check_group_params(message)
 
-    await get_or_create_user(user_id=message.from_user.id,
-                             username=message.from_user.username,
-                             first_name=message.from_user.first_name,
-                             last_name=message.from_user.last_name, )
-    await get_or_create_group(group_id=str(message.chat.id),
-                              group_name=message.chat.title,
-                              topic_id=message.message_thread_id)
+    await get_or_create_user(user_id=tg_user_id,
+                             username=tg_username,
+                             first_name=tg_first_name,
+                             last_name=tg_last_name)
+    await get_or_create_group(group_id=tg_group_id,
+                              group_name=tg_group_name,
+                              topic_id=tg_topic_id)
 
-    all_types_training_group = await get_all_types_training_group(group_id=str(message.chat.id))
+    all_types_training_group = await get_all_types_training_group(group_id=tg_group_id)
 
     if len(all_types_training_group) == 0:
         await message.answer('❌ Отсутствуют типы упражнений')
@@ -207,7 +216,7 @@ async def choose_training_type(message: Message, state: FSMContext):
     for type in all_types_training_group:
         keyboard.append([InlineKeyboardButton(text=type, callback_data='type_' + type)])
 
-    if message.text.lower() == 'lazy':
+    if message.text is not None and message.text.lower() == 'lazy':
         keyboard.append([InlineKeyboardButton(text='Все', callback_data='type_all')])
 
     reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -225,14 +234,17 @@ async def choose_training_type(message: Message, state: FSMContext):
 
 @router.callback_query(PossibleStates.choose_training_type)
 async def callback_choose_training_type(callback: CallbackQuery, state: FSMContext):
+    if callback.data is None:
+        return
+    
     callback_data = callback.data.split('_')[1]
     command = str(await state.get_value('command'))
 
     if callback_data == '':
         return
 
-    if command == '/lazy':
-        await callback.edit_message_text('Метод находится в разработке...')
+    if command == '/lazy' and isinstance(callback.message, Message):
+        await callback.message.edit_text(text='Метод находится в разработке...')
     elif command == '/remove':
         keyboard = [
             [InlineKeyboardButton(text="10", callback_data="count_10"),
@@ -248,22 +260,29 @@ async def callback_choose_training_type(callback: CallbackQuery, state: FSMConte
         await state.set_data({
             'record_type': callback_data
         })
-        await callback.message.edit_text(text=f'Тип: {callback_data.upper()}\nВыберете количество, которое хотите удалить:',reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+        if isinstance(callback.message, Message):
+            await callback.message.edit_text(text=f'Тип: {callback_data.upper()}\nВыберете количество, которое хотите удалить:',reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+        else:
+            await state.clear()
+            return
     else:
         await state.clear()
         return
 
 @router.message(Command(commands='types'))
 async def types_command(message: Message, state: FSMContext):
-    await get_or_create_user(user_id=message.from_user.id,
-                             username=message.from_user.username,
-                             first_name=message.from_user.first_name,
-                             last_name=message.from_user.last_name,)
-    await get_or_create_group(group_id=str(message.chat.id),
-                              group_name=message.chat.title,
-                              topic_id=message.message_thread_id)
+    tg_user_id, tg_username, tg_first_name, tg_last_name = check_user_params(message)
+    tg_group_id, tg_group_name, tg_topic_id = check_group_params(message)
 
-    all_types = await get_all_types_training_group(group_id=str(message.chat.id))
+    await get_or_create_user(user_id=tg_user_id,
+                             username=tg_username,
+                             first_name=tg_first_name,
+                             last_name=tg_last_name)
+    await get_or_create_group(group_id=tg_group_id,
+                              group_name=tg_group_name,
+                              topic_id=tg_topic_id)
+
+    all_types = await get_all_types_training_group(group_id=tg_group_id)
 
     if all_types is None or len(all_types) == 0:
         await message.answer(f'В группе отсутствуют тренировки для отслеживания\n'

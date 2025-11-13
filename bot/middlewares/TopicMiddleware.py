@@ -18,12 +18,12 @@ class TopicMiddlewares(BaseMiddleware):
         if not isinstance(event, Update) or not event.message:
             return await handler(event, data)
 
-        chat_id = str(event.message.chat.id)
+        chat_id = event.message.chat.id
         topic_id = getattr(event.message, 'message_thread_id', None)
         print(f"group - {chat_id}, topic_id - {topic_id}")
         async with async_session() as session:
             result = await session.execute(
-                select(Group).where(Group.group_id == chat_id)
+                select(Group).where(Group.tg_group_id == chat_id)
             )
             group = result.scalar_one_or_none()
 
