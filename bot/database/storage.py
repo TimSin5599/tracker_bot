@@ -6,9 +6,12 @@ from sqlalchemy import select, func, and_, delete, or_, update
 from sqlalchemy.orm import selectinload, aliased
 from bot.database.models import Base, User, Group, user_group_association, DailyGroupRecords, GroupsRecords, \
     UsersRecords, RecordTypes
-from bot.database.session import async_session
-from bot.database.session import engine
+import logging
+from bot.database.session import async_session, engine
 from config.settings import settings
+
+logger = logging.getLogger(__name__)
+
 
 
 async def init_database():
@@ -182,9 +185,101 @@ async def add_pushups(message: Message,
             )
             session.add(user_record)
 
-        await session.commit()
+async def add_pushups_new(user_id: int, username: str, first_name: str, last_name: str,
+                          chat_id: int, chat_title: str, topic_id: int | None,
+                          type_record: str, count: int = 0):
+    """Добавление отжиманий пользователю (новая версия без привязки к Message)"""
 
+    async with async_session() as session:
+        await get_or_create_user(user_id, username, first_name, last_name)
+        await get_or_create_group(chat_id, chat_title, topic_id)
+        
+        type_record_id = await get_id_group_training_type(group_id=chat_id, training_type=type_record)
+        
+        # Добавляем пользователя в группу (логика из add_user_to_group)
+        user_res = await session.execute(
+            select(User)
+            .where(User.tg_user_id == user_id)
+            .options(selectinload(User.groups))
+        )
+        user = user_res.scalar_one_or_none()
+        group_res = await session.execute(select(Group).where(Group.tg_group_id == chat_id))
+        group = group_res.scalar_one_or_none()
+        
+        if user and group:
+            if group not in user.groups:
+                user.groups.append(group)
+                await session.commit()
+
+
+        # Ежедневная запись
+        result = await session.execute(
+            select(DailyGroupRecords).where(
+                DailyGroupRecords.tg_user_id == user_id,
+                DailyGroupRecords.tg_group_id == chat_id,
+                DailyGroupRecords.type_record_id == type_record_id
+            )
+        )
+        daily_record = result.scalar_one_or_none()
+
+        if daily_record:
+            daily_record.count += count
+            daily_record.date = datetime.now()
+            daily_count = daily_record.count
+        else:
+            daily_count = count
+            daily_record = DailyGroupRecords(
+                tg_user_id=user_id,
+                tg_group_id=chat_id,
+                type_record_id=type_record_id,
+                count=count,
+                date=datetime.now()
+            )
+            session.add(daily_record)
+
+        # Статистика группы
+        result = await session.execute(
+            select(GroupsRecords).where(
+                GroupsRecords.tg_group_id == chat_id,
+                GroupsRecords.type_record_id == type_record_id
+            )
+        )
+        group_stat = result.scalar_one_or_none()
+
+        if group_stat:
+            group_stat.summary_count += count
+        else:
+            group_stat = GroupsRecords(
+                tg_group_id=chat_id,
+                type_record_id=type_record_id,
+                summary_count=count
+            )
+            session.add(group_stat)
+
+        # Статистика пользователя
+        result = await session.execute(
+            select(UsersRecords).where(
+                UsersRecords.tg_user_id == user_id,
+                UsersRecords.type_record_id == type_record_id
+            )
+        )
+        user_stat = result.scalar_one_or_none()
+
+        if user_stat:
+            user_stat.summary_count += count
+            summary_record = user_stat.summary_count
+        else:
+            summary_record = count
+            user_stat = UsersRecords(
+                tg_user_id=user_id,
+                type_record_id=type_record_id,
+                summary_count=count
+            )
+            session.add(user_stat)
+
+        await session.commit()
         return summary_record, daily_count, count
+
 
 
 async def get_id_group_training_type(group_id: int, training_type: str):
@@ -228,20 +323,20 @@ async def get_group_stats(message: Message, training_type: str | None = None):
         group_stats = {}
 
         if training_type:
-            # training_type_id = await get_id_group_training_type(group_id, training_type)
-            # TO DO:
-            print()
+            # TODO: Реализовать фильтрацию по типу тренировки
+            pass
         else:
             try:
                 for user in users:
                     user_stats = await get_user_stats(message)
                     total_size_trainings = 0
-                    for type, stats in user_stats.items():
+                    for training_type_key, stats in user_stats.items():
                             total_size_trainings += int(stats['today'])
                     user_stats['total_size_trainings'] = total_size_trainings
                     group_stats[user.username] = user_stats
             except Exception as e:
-                print(e)
+                logger.error(f"Ошибка при получении статистики группы: {e}")
+
         return dict(sorted(group_stats.items(), key=lambda x: x[1]['total_size_trainings'], reverse=True))
 
 # Получение статистики пользователя из определенной группы
@@ -281,11 +376,12 @@ async def get_user_group_training_type_stats(message: Message, training_type: st
 
 async def get_today_records(user_id: int, group_id: str, type_record_id: int):
     async with async_session() as session:
-        user = await get_or_create_user(user_id, "", "")
+        # Убеждаемся, что пользователь существует
+        await get_or_create_user(user_id, "", "")
 
         result = await session.execute(
             select(DailyGroupRecords.count)
-            .where(DailyGroupRecords.tg_user_id == user.id,
+            .where(DailyGroupRecords.tg_user_id == user_id,
                    DailyGroupRecords.tg_group_id == group_id,
                    DailyGroupRecords.type_record_id == type_record_id)
         )
@@ -293,17 +389,20 @@ async def get_today_records(user_id: int, group_id: str, type_record_id: int):
         return count
 
 
+
 async def get_total_records(user_id: int, type_record_id: int):
     async with async_session() as session:
-        user = await get_or_create_user(user_id, "", "")
+        # Убеждаемся, что пользователь существует
+        await get_or_create_user(user_id, "", "")
 
         result = await session.execute(
             select(UsersRecords.summary_count)
-            .where(UsersRecords.tg_user_id == user.id,
+            .where(UsersRecords.tg_user_id == user_id,
                    UsersRecords.type_record_id == type_record_id)
         )
         count = result.scalar_one_or_none() or 0
         return count
+
 
 
 async def get_user_stats(message: Message):
@@ -359,8 +458,10 @@ async def update_user_activity(message: Message):
             await get_or_create_group(group_id, group_name, topic_id)
             await add_user_to_group(message)
             await session.commit()
-    except ValueError as e:
-        message.answer(f"❌ Ошибка при обновлении активности пользователя: {e}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка в update_user_activity: {e}")
+        await message.answer(f"❌ Произошла ошибка при обновлении активности.")
+
 
 
 async def get_required_count(group_id: int, training_type: str):
@@ -417,10 +518,16 @@ def check_group_params(message: Message):
         raise ValueError("Информация о группе отсутствует в сообщении.")
     
     group_id = group_obj.id if group_obj.id else None
-    group_name = group_obj.title if group_obj.title else None
     topic_id = message.message_thread_id if message.message_thread_id else None
-
+    
+    # В приватных чатах нет title, используем имя пользователя
+    if group_obj.type == 'private':
+        group_name = group_obj.full_name or f"User {group_id}"
+    else:
+        group_name = group_obj.title
+    
     if group_id is None or group_name is None:
         raise ValueError(f"Недостаточно данных: group_id={group_id}, group_name={group_name}, topic_id={topic_id}")
     
     return group_id, group_name, topic_id
+

@@ -17,7 +17,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+# Настройка логгера для текущего модуля
 logger = logging.getLogger(__name__)
+
 
 
 async def main():
@@ -33,24 +35,28 @@ async def main():
 
     bot = Bot(token=settings.BOT_TOKEN)
     dp = Dispatcher()
-    scheduler = AsyncIOScheduler()
-    timezone = "Europe/Moscow"
-    dp.update.middleware()
 
+    # Middleware
     dp.update.outer_middleware(TopicMiddlewares())
+    
+    # Регистрация роутеров
     dp.include_router(commands.router)
     dp.include_router(pushups.router)
 
-    # Настраиваем напоминания
+    # Настраиваем напоминания (передаем только бота, планировщик создается внутри)
     setup_reminders(bot)
+
     # Запускаем бота
     logger.info("🤖 Бот запускается...")
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"❌ Ошибка во время работы бота: {e}")
+    finally:
+        await bot.session.close()
+        logger.info("👋 Бот остановлен")
 
-    logger.info("✅ Бот запущен и работает!")
-    logger.info("⏰ Напоминания настроены: 22:00 и 00:00")
-    logger.info("🔍 Режим отладки включен")
 
 
 if __name__ == "__main__":

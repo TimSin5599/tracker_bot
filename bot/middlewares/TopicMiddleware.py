@@ -1,3 +1,4 @@
+import logging
 from aiogram.types import Update, TelegramObject
 from aiogram import BaseMiddleware
 from typing import Callable, Dict, Any, Awaitable
@@ -5,6 +6,9 @@ from typing import Callable, Dict, Any, Awaitable
 from bot.database.models import Group
 from bot.database.session import async_session
 from sqlalchemy import select
+
+logger = logging.getLogger(__name__)
+
 
 
 class TopicMiddlewares(BaseMiddleware):
@@ -27,11 +31,12 @@ class TopicMiddlewares(BaseMiddleware):
             )
             group = result.scalar_one_or_none()
 
-        if group is None or (group.topic_id is None and topic_id is None):
+        if group is None:
             return await handler(event, data)
 
-        if (group.topic_id is not None and topic_id is None) or (group.topic_id is None and topic_id is not None):
+        # Если в группе задан топик, а сообщение пришло не в него, или наоборот
+        if group.topic_id != topic_id:
+            logger.debug(f"Message filtered: expected topic {group.topic_id}, got {topic_id}")
             return
 
-        if int(topic_id) == int(group.topic_id):
-            return await handler(event, data)
+        return await handler(event, data)

@@ -1,3 +1,4 @@
+import logging
 import pytz
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -8,7 +9,10 @@ from bot.database.models import Group
 from bot.database.session import async_session
 from bot.database.storage import get_users_without_training_today, reset_daily_trainings, get_all_types_training_group
 
+logger = logging.getLogger(__name__)
+
 MOSCOW_TZ = pytz.timezone("Europe/Moscow")
+
 
 
 async def send_reminders(bot: Bot):
@@ -35,9 +39,10 @@ async def send_reminders(bot: Bot):
                 report_text = "✅ Все молодцы! Сегодня все сделали отжимания 🎉"
 
             try:
-                await bot.send_message(chat_id=group.group_id, text=report_text, message_thread_id=group.topic_id)
+                await bot.send_message(chat_id=group.tg_group_id, text=report_text, message_thread_id=group.topic_id)
             except Exception as e:
-                print(f"Не удалось отправить сообщение в группу {group.group_id}: {e}")
+                logger.error(f"Не удалось отправить сообщение в группу {group.tg_group_id}: {e}")
+
 
 
 
@@ -62,9 +67,10 @@ async def send_daily_report(bot: Bot):
                     report_text += f" • @{user.username} {user.record_type.upper()} Было сделано - {user.count or 0}\n"
 
                 try:
-                    await bot.send_message(chat_id=group.group_id, text=report_text, message_thread_id=group.topic_id)
+                    await bot.send_message(chat_id=group.tg_group_id, text=report_text, message_thread_id=group.topic_id)
                 except Exception as e:
-                    print(f"Не удалось отправить сообщение в группу {group.group_id}:  {e}")
+                    logger.error(f"Не удалось отправить ежедневный отчет в группу {group.tg_group_id}: {e}")
+
 
             await reset_daily_trainings(group)
 

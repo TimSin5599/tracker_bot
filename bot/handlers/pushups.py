@@ -6,10 +6,17 @@ from aiogram.fsm.context import FSMContext
 from sqlalchemy import select
 from bot.database.models import Group
 
+import logging
 from bot.database.session import async_session
-from bot.database.storage import add_pushups, check_group_params, check_user_params, get_all_types_training_group, get_id_group_training_type, \
+from bot.database.storage import (
+    add_pushups, check_group_params, check_user_params, 
+    get_all_types_training_group, get_id_group_training_type,
     get_or_create_user, get_or_create_group
+)
 from bot.handlers.possible_states import PossibleStates
+
+logger = logging.getLogger(__name__)
+
 
 router = Router()
 
@@ -40,10 +47,11 @@ async def handle_select_trainig_type(message: Message, state: FSMContext):
         )
         group = result.scalar_one_or_none()
         if group:
-            print(f"🔍 Найдена группа {group.tg_group_id}, проверяю topic_id={tg_topic_id} vs {group.topic_id}")
+            logger.debug(f"🔍 Найдена группа {group.tg_group_id}, топик={tg_topic_id}")
         else:
-            print(f"❌ Группа {tg_group_id} не найдена в БД")
+            logger.warning(f"❌ Группа {tg_group_id} не найдена в БД")
             return
+
 
     # ОЧИЩАЕМ предыдущие состояния
     await state.clear()
@@ -69,9 +77,12 @@ async def handle_select_trainig_type(message: Message, state: FSMContext):
     print(f'user_id={message.from_user.id}')
 
     await state.set_data({
-        'message_from_user': message
+        'user_id': message.from_user.id,
+        'chat_id': message.chat.id,
+        'message_id': message.message_id
     })    
     await state.set_state(PossibleStates.awaiting_type_training)
+
 
 @router.callback_query(PossibleStates.awaiting_type_training)
 async def handle_awaiting_type_training(callback: CallbackQuery, state: FSMContext):
@@ -80,8 +91,12 @@ async def handle_awaiting_type_training(callback: CallbackQuery, state: FSMConte
         return
     
     type_training = callback.data.split('_')[1]
-    print(f'type_training: {type_training}, user_id={callback.from_user.id}')
-    message_from_user = await state.get_value('message_from_user')
+    data = await state.get_data()
+    
+    if callback.from_user.id != data.get('user_id'):
+        await callback.answer("❌ Это не ваше сообщение!", show_alert=True)
+        return
+
 
     if type_training == 'cancel':
         await state.clear()
@@ -113,56 +128,31 @@ async def handle_awaiting_type_training(callback: CallbackQuery, state: FSMConte
         reply_markup=reply_markup
     )
 
-    await state.clear()
-
-    tg_user_id, _, _, _ = check_user_params(callback.message)
-
-    # Сохраняем информацию о кружочке
-    await state.set_data({
+    # Сохраняем информацию для следующего шага
+    await state.update_data({
         'training_type': type_training,
-        'message_from_user': message_from_user
+        'bot_message_id': callback.message.message_id
     })
 
     await state.set_state(PossibleStates.awaiting_count)
 
-    print(f"📹 Установлены состояния после видео: {state}")
+
 
 @router.callback_query(PossibleStates.awaiting_count)
 async def handle_count_callback(callback: CallbackQuery, state: FSMContext, bot: Bot):
     """Обработка выбора количества через кнопки"""
-    training_type = await state.get_value('training_type')
-    message_from_user = await state.get_value('message_from_user')
+    data = await state.get_data()
 
-    if not isinstance(message_from_user, Message):
-        await state.clear()
-        return    
+    user_id = data.get('user_id')
+    training_type = data.get('training_type')
 
-    if message_from_user.from_user is None:
-        await state.clear()
-        return
-    
-    if not isinstance(callback.message, Message):
-        await state.clear()
-        return
-
-    # Нельзя использовать тк callback.message это сообщение бота
-    # tg_user_id, _, _, _ = check_user_params(callback.message)
-    # tg_group_id, tg_group_name, tg_topic_id = check_group_params(callback.message)
-    user_id = message_from_user.from_user.id
-
-    if not callback.message.from_user:
-        await state.clear()
-        return
-
-    if user_id != callback.message.from_user.id and callback.message.from_user.id != bot.id:
-        await bot.send_message(
-            chat_id=callback.message.chat.id,
-            message_thread_id=callback.message.message_thread_id,
-            text=f'''Пользователь @{callback.from_user.username}, вы не можете выбирать количество отжиманий за других'''
-        )
+    if callback.from_user.id != user_id:
+        await callback.answer("❌ Вы не можете выбирать за других!", show_alert=True)
         return
 
     await callback.answer()
+
+
 
     if not callback.data:
         await state.clear()
@@ -172,32 +162,24 @@ async def handle_count_callback(callback: CallbackQuery, state: FSMContext, bot:
 
     if count_str == 'custom':
         # Для кнопки "Другое число" запрашиваем точное число
-        print("🔔 Запрошен ввод своего числа")
+        logger.debug("🔔 Запрошен ввод своего числа")
 
         keyboard = [
             [InlineKeyboardButton(text="Отмена", callback_data="count_cancel")]
         ]
         reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-        # ОЧИЩАЕМ предыдущие состояния и устанавливаем новое
-        await state.clear()  # Очищаем все предыдущие состояния
-
+        # Устанавливаем статус ожидания текста, но сохраняем данные
         await state.set_state(PossibleStates.awaiting_count)
-        await state.set_data({
-            'message_from_user': message_from_user,
-            'bot_msg_id': callback.message.message_id,
-            'training_type': training_type
-        })
-
-        print(f"🔔 Установлены состояния: {await state.get_data()}")
-
+        
         await callback.message.edit_text(
-            "🔢 Введите точное количество отжиманий:\n\n"
+            "🔢 Введите точное количество:\n\n"
             "Отправьте число сообщением\n"
             "Примеры: 15, 30, 42\n\n",
             reply_markup=reply_markup
         )
         return
+
 
     elif count_str == '0' or count_str == 'cancel':
         # Для кнопки "Пропустить" - просто удаляем сообщение
@@ -209,12 +191,26 @@ async def handle_count_callback(callback: CallbackQuery, state: FSMContext, bot:
     else:
         # Для числовых кнопок обрабатываем как обычно
         count = int(count_str)
-        print(f"🔔 Обрабатываем {count} отжиманий")
-        print(f"🔔 username: {message_from_user.from_user.username if message_from_user.from_user else 'unknown'}")
-        await process_pushup_count(message=message_from_user,
-                                   bot_message_id=callback.message.message_id,
-                                   count=count,
-                                   training_type=training_type)
+        logger.info(f"🔔 Обрабатываем {count} тренировок для {callback.from_user.username}")
+        
+        # Нам нужно восстановить объект сообщения или достаточно данных?
+        # process_pushup_count использует message для извлечения параметров
+        # В aiogram 3 можно создать объект Message вручную или переделать функцию
+        
+        await process_pushup_count(
+            bot=bot,
+            chat_id=callback.message.chat.id,
+            message_thread_id=callback.message.message_thread_id,
+            user_id=callback.from_user.id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name or "",
+            bot_message_id=callback.message.message_id,
+            count=count,
+            training_type=training_type
+        )
+
+
 
         await state.clear()
         print("✅ Состояние очищено")
@@ -223,29 +219,20 @@ async def handle_count_callback(callback: CallbackQuery, state: FSMContext, bot:
 async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot):
     """Обработка текстового ввода количества отжиманий"""
 
-    """Проверка что пользователь выполнял шаги до этого"""
-    message_from_user = await state.get_value('message_from_user')
-    training_type = await state.get_value('training_type')
-    # tg_user_id, tg_username, _, _ = check_user_params(message)
+    data = await state.get_data()
+    user_id = data.get('user_id')
+    training_type = data.get('training_type')
+    bot_message_id = data.get('bot_message_id') or data.get('bot_msg_id')
 
-    if message_from_user is None or training_type is None:
+    if not user_id or not training_type:
         await state.clear()
         return
     
-    if message.from_user is None:
-        await state.clear()
+    if message.from_user is None or message.from_user.id != user_id:
+        if message.from_user:
+            await message.answer(f"❌ @{message.from_user.username}, вы не можете вводить данные за другого пользователя!")
         return
-    
-    tg_user_id = message.from_user.id
-    username = message.from_user.username
 
-    if message_from_user.from_user.id != tg_user_id:
-        await bot.send_message(
-            chat_id=message.chat.id,
-            message_thread_id=message.message_thread_id,
-            text=f'''Пользователь @{username}, вы не можете выбирать количество отжиманий за других'''
-        )
-        return
 
 
     if not message:
@@ -258,8 +245,9 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
 
     text = message.text.strip()
 
-    print(f"🔍 Получен текст от user_id={tg_user_id}: '{text}'")
-    print(f"🔍 ВСЕ user_data: {message.from_user}")
+    logger.debug(f"🔍 Получен текст от user_id={user_id}: '{text}'")
+    # print(f"🔍 ВСЕ user_data: {message.from_user}")
+
 
     # ПРОВЕРЯЕМ СОСТОЯНИЯ
     user_id_in_context = await state.get_value('user_id')
@@ -267,20 +255,17 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
         count = int(text)
 
         if count == 0:
-            user_msg_id = message.message_id
-            bot_msg_id = await state.get_value('bot_msg_id')
-
-            await message.delete()
-            if bot_msg_id:
-                await bot.delete_message(
-                    chat_id=message.chat.id,
-                    message_id=bot_msg_id
-                )
+            if bot_message_id:
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=bot_message_id)
+                except Exception:
+                    pass
 
             await state.clear()
             await message.delete()
-            print("✅ Удалено сообщение пользователя и сообщение бота, состояние очищено")
+            logger.debug("✅ Удалено сообщение пользователя и сообщение бота, состояние очищено")
             return
+
 
         if count < 0:
             await message.reply("❌ Число не может быть отрицательным")
@@ -290,13 +275,24 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
             await message.reply("❌ Слишком большое число. Максимум 200")
             return
 
-        # Получаем group_id
-        bot_message_id = await state.get_value('bot_msg_id')
-        # ПЕРЕДАЕМ update, user_id, count, group_id
-        await process_pushup_count(message=message,
-                                   bot_message_id=bot_message_id,
-                                   count=count,
-                                   training_type=training_type)
+        # Получаем данные из стейта
+        data = await state.get_data()
+        bot_message_id = data.get('bot_message_id')
+        
+        # ПЕРЕДАЕМ данные в новую функцию
+        await process_pushup_count(
+            bot=bot,
+            chat_id=message.chat.id,
+            message_thread_id=message.message_thread_id,
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name or "",
+            bot_message_id=bot_message_id,
+            count=count,
+            training_type=training_type
+        )
+
         await message.chat.delete_message(message.message_id)
 
         # Очищаем состояние
@@ -308,36 +304,46 @@ async def handle_pushup_text_input(message: Message, state: FSMContext, bot: Bot
 
 
 
-async def process_pushup_count(message: Message, bot_message_id, count, training_type):
-    """Обработка введенного количества отжиманий"""
-    tg_user_id, tg_username, tg_first_name, tg_last_name = check_user_params(message)
-    tg_group_id, _, _ = check_group_params(message)
-    summary_record, today_total, actual_count = await add_pushups(message=message, type_record=training_type, count=count)
-    user = await get_or_create_user(user_id=tg_user_id, username=tg_username, first_name=tg_first_name, last_name=tg_last_name)
+async def process_pushup_count(bot: Bot, chat_id, message_thread_id, user_id, username, first_name, last_name, bot_message_id, count, training_type):
+    """Обработка введенного количества тренировок и обновление сообщения бота"""
+    from bot.database.storage import add_pushups_new
+    
+    summary_record, today_total, actual_count = await add_pushups_new(
+        user_id=user_id, 
+        username=username, 
+        first_name=first_name, 
+        last_name=last_name,
+        chat_id=chat_id,
+        chat_title="Group", 
+        topic_id=message_thread_id,
+        type_record=training_type, 
+        count=count
+    )
 
     if count <= 15:
-        emoji = "👶"
-        level = "Начальный уровень"
+        emoji, level = "👶", "Начальный уровень"
     elif count <= 30:
-        emoji = "💪"
-        level = "Средний уровень"
+        emoji, level = "💪", "Средний уровень"
     elif count <= 50:
-        emoji = "🔥"
-        level = "Продвинутый уровень"
+        emoji, level = "🔥", "Продвинутый уровень"
     else:
-        emoji = "🏆"
-        level = "Экспертный уровень"
+        emoji, level = "🏆", "Экспертный уровень"
 
-    # ПРАВИЛЬНО определяем как отвечать
-    await message.edit_text(
-        text=
-            f"{training_type} пользователя @{user.username}\n\n"
-            f"{emoji} {level}\n"
-            f"✔️ Засчитано: {actual_count}!\n"
-            f"📅 Сегодня: {today_total}\n"
-            f"📈 За всё время: {summary_record}\n"
-            f"⭐ Отличная работа! Продолжайте в том же духе! 🎯"
-    )
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=bot_message_id,
+            text=f"{training_type} пользователя @{username}\n\n"
+                 f"{emoji} {level}\n"
+                 f"✔️ Засчитано: {actual_count}!\n"
+                 f"📅 Сегодня: {today_total}\n"
+                 f"📈 За всё время: {summary_record}\n"
+                 f"⭐ Отличная работа! Продолжайте в том же духе! 🎯"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при редактировании сообщения: {e}")
+
+
 
 @router.message(Command(commands='/cancel'))
 async def cancel_command(message: Message, state: FSMContext):
