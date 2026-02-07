@@ -374,7 +374,7 @@ async def get_user_group_training_type_stats(message: Message, training_type: st
         }
 
 
-async def get_today_records(user_id: int, group_id: str, type_record_id: int):
+async def get_today_records(user_id: int, group_id: int, type_record_id: int):
     async with async_session() as session:
         # Убеждаемся, что пользователь существует
         await get_or_create_user(user_id, "", "")
