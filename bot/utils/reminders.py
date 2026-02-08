@@ -27,10 +27,9 @@ async def send_reminders(bot: Bot):
             report_text += "❌ Эти пользователи ещё не сделали упражнения:\n"
 
             users_not_done = await get_users_without_training_today(group=group)
-            print(users_not_done)
             if users_not_done:
                 # Если есть "прогульщики"
-                print(users_not_done)
+                logger.debug(f"Users not done: {users_not_done}")
                 for user in users_not_done:
                     count = int(user.count) if user.count is not None else 0
                     report_text += f" • @{user.username} {user.record_type.upper()} (осталось сделать - {int(user.required) - count})\n"
@@ -60,8 +59,8 @@ async def send_daily_report(bot: Bot):
 
             users_not_done = await get_users_without_training_today(group=group)
 
-            if users_not_done or len(users_not_done) > 0:
-                print(f'{users_not_done} {group.id} {group.group_id}')
+            if users_not_done:
+                logger.debug(f'{users_not_done} {group.id} {group.tg_group_id}')
 
                 for user in users_not_done:
                     report_text += f" • @{user.username} {user.record_type.upper()} Было сделано - {user.count or 0}\n"
@@ -86,7 +85,7 @@ def setup_reminders(bot: Bot):
                       replace_existing=True)
 
     scheduler.add_job(send_daily_report,
-                      trigger=CronTrigger(hour=0, minute=0),
+                      trigger=CronTrigger(hour=2, minute=0),
                       args=[bot],
                       id='daily_report',
                       replace_existing=True)
