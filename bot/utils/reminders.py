@@ -23,7 +23,7 @@ async def send_reminders(bot: Bot):
 
 
         for group in groups:
-            report_text = "⏰ Напоминание!\nДо конца дня осталось 3 часа.\n\n"
+            report_text = "⏰ Напоминание!\nДо конца дня осталось 5 часов.\n\n"
             report_text += "❌ Эти пользователи ещё не сделали упражнения:\n"
 
             users_not_done = await get_users_without_training_today(group=group)
